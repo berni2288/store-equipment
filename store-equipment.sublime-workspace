@@ -156,6 +156,7 @@
 		"case_sensitive": false,
 		"find_history":
 		[
+			"printtochat",
 			"EquipmentModelPath",
 			"g_skinsCount",
 			"g_equipment",
@@ -282,8 +283,7 @@
 			"json_array_get_float",
 			"position",
 			"g_SpriteModel",
-			"150",
-			"AddTrail"
+			"150"
 		],
 		"highlight": true,
 		"in_selection": false,
@@ -316,8 +316,8 @@
 						"selection":
 						[
 							[
-								117,
-								117
+								9576,
+								9576
 							]
 						],
 						"settings":
@@ -326,7 +326,7 @@
 							"translate_tabs_to_spaces": false
 						},
 						"translation.x": 0.0,
-						"translation.y": 0.0,
+						"translation.y": 4967.0,
 						"zoom_level": 1.0
 					},
 					"type": "text"
