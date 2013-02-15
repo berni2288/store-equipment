@@ -98,6 +98,21 @@ public OnPluginStart()
 	Store_RegisterItemType("equipment", OnEquip, LoadItem);
 }
 
+/**
+ * Map is starting
+ */
+public OnMapStart()
+{
+	for (new item = 0; item < g_equipmentCount; item++)
+	{
+		if (strcmp(g_equipment[item][EquipmentModelPath], "") != 0 && (FileExists(g_equipment[item][EquipmentModelPath]) || FileExists(g_equipment[item][EquipmentModelPath], true)))
+		{
+			PrecacheModel(g_equipment[item][EquipmentModelPath]);
+			Downloader_AddFileToDownloadsTable(g_equipment[item][EquipmentModelPath]);
+		}
+	}
+}
+
 /** 
  * Called when a new API library is loaded.
  */
