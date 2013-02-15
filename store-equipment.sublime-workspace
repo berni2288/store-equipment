@@ -43,7 +43,7 @@
 			"file": "scripting/store-equipment.sp",
 			"settings":
 			{
-				"buffer_size": 14434,
+				"buffer_size": 14432,
 				"line_ending": "Windows"
 			}
 		}
@@ -309,15 +309,15 @@
 					"file": "scripting/store-equipment.sp",
 					"settings":
 					{
-						"buffer_size": 14434,
+						"buffer_size": 14432,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								9535,
-								9535
+								1728,
+								1728
 							]
 						],
 						"settings":
@@ -326,7 +326,7 @@
 							"translate_tabs_to_spaces": false
 						},
 						"translation.x": 0.0,
-						"translation.y": 4967.0,
+						"translation.y": 720.0,
 						"zoom_level": 1.0
 					},
 					"type": "text"
