@@ -43,6 +43,7 @@ new Handle:g_loadoutSlotList = INVALID_HANDLE;
 new g_playerModels[1024][EquipmentPlayerModelSettings];
 new g_playerModelCount = 0;
 
+new g_currentHats[MAXPLAYERS+1];
 new g_iEquipment[MAXPLAYERS+1][32];
 
 /**
@@ -94,6 +95,8 @@ public OnPluginStart()
 	PrepSDKCall_SetReturnInfo(SDKType_PlainOldData, SDKPass_Plain);
 	PrepSDKCall_AddParameter(SDKType_String, SDKPass_Pointer);
 	g_hLookupAttachment = EndPrepSDKCall();	
+
+	RegAdminCmd("sm_editor", Command_OpenEditor, ADMFLAG_ROOT, "Opens equipment editor.");
 
 	Store_RegisterItemType("equipment", OnEquip, LoadItem);
 }
@@ -462,6 +465,7 @@ bool:Equip(client, loadoutSlot, const String:name[])
 	DispatchSpawn(ent);	
 	AcceptEntityInput(ent, "TurnOn", ent, ent, 0);
 	
+	g_currentHats[client] = itemId;
 	g_iEquipment[client][loadoutSlot] = ent;
 	
 	SDKHook(ent, SDKHook_SetTransmit, ShouldHide);
@@ -497,7 +501,7 @@ UnequipAll(client)
 
 public Action:ShouldHide(ent, client)
 {
-	if (g_toggleEffects)
+	/*if (g_toggleEffects)
 		if (!ShowClientEffects(client))
 			return Plugin_Handled;
 			
@@ -511,10 +515,10 @@ public Action:ShouldHide(ent, client)
 	{
 		for (new index = 0, size = GetArraySize(g_loadoutSlotList); index < size; index++)
 		{
-			if(ent == g_iEquipment[GetEntPropEnt(client, Prop_Send, "m_hObserverTarget")][index])
+			if (ent == g_iEquipment[GetEntPropEnt(client, Prop_Send, "m_hObserverTarget")][index])
 				return Plugin_Handled;
 		}
-	}
+	}*/
 	
 	return Plugin_Continue;
 }
@@ -528,4 +532,191 @@ stock bool:LookupAttachment(client, String:point[])
 		return false;
 	
 	return SDKCall(g_hLookupAttachment, client, point);
+}
+
+public Action:Command_OpenEditor(client, args)
+{
+	if (args < 1)
+	{
+		ReplyToCommand(client, "%sUsage: sm_editor <name>", STORE_PREFIX);
+		return Plugin_Handled;
+	}
+
+	decl String:target[65];
+	decl String:target_name[MAX_TARGET_LENGTH];
+	decl target_list[MAXPLAYERS];
+	decl target_count;
+	decl bool:tn_is_ml;
+    
+	GetCmdArg(1, target, sizeof(target));
+     
+	if ((target_count = ProcessTargetString(
+			target,
+			0,
+			target_list,
+			MAXPLAYERS,
+			0,
+			target_name,
+			sizeof(target_name),
+			tn_is_ml)) <= 0)
+	{
+		ReplyToTargetError(client, target_count);
+		return Plugin_Handled;
+	}
+
+	for (new i = 0; i < target_count; i++)
+	{
+		if (IsClientInGame(target_list[i]) && !IsFakeClient(target_list[i]))
+		{
+			OpenEditor(client, target_list[0]);
+			break;
+		}
+	}
+
+	return Plugin_Handled;
+}
+
+OpenEditor(client, target)
+{
+	new Handle:menu = CreateMenu(LoadoutSlotSelectHandle);
+	SetMenuTitle(menu, "Select loadout slot:");
+	PrintToChat(client, "%d", GetArraySize(g_loadoutSlotList));
+
+	for (new index = 0, size = GetArraySize(g_loadoutSlotList); index < size; index++)
+	{
+		decl String:loadoutSlot[32];
+		GetArrayString(g_loadoutSlotList, index, loadoutSlot, sizeof(loadoutSlot));
+
+		decl String:value[32];
+		Format(value, sizeof(value), "%d,%d", target, index);
+
+		AddMenuItem(menu, value, loadoutSlot);
+	}
+
+	DisplayMenu(menu, client, 0);
+}
+
+public LoadoutSlotSelectHandle(Handle:menu, MenuAction:action, client, slot)
+{
+	if (action == MenuAction_Select)
+	{
+		new String:value[48];
+		if (GetMenuItem(menu, slot, value, sizeof(value)))
+		{
+			new String:values[2][16];
+			ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
+
+			OpenEditorLoadoutSlot(client, StringToInt(values[0]), StringToInt(values[1]));
+		}
+	}
+	else if (action == MenuAction_End)
+	{
+		CloseHandle(menu);
+	}
+}
+
+OpenEditorLoadoutSlot(client, target, loadoutSlot, Float:amount = 0.5)
+{
+	new Handle:menu = CreateMenu(ActionSelectHandle);
+	SetMenuTitle(menu, "Select loadout slot:");
+
+	for (new bool:add = true; add >= false; add--)
+	{
+		for (new axis = 'x'; axis <= 'z'; axis++)
+		{
+			AddEditorMenuItem(menu, target, "position", loadoutSlot, axis, add, amount);
+		}
+	}
+
+	AddEditorMenuItem(menu, target, "save", loadoutSlot);
+	DisplayMenu(menu, client, 0);
+}
+
+AddEditorMenuItem(Handle:menu, target, const String:actionType[], loadoutSlot, axis = 0, bool:add = false, Float:amount = 0.0)
+{
+	decl String:value[128];
+	Format(value, sizeof(value), "%s,%d,%d,%c,%b", actionType, target, loadoutSlot, axis, add);
+
+	decl String:text[32];
+
+	if (StrEqual(actionType, "position"))
+	{
+		Format(text, sizeof(text), "%c ", CharToUpper(axis));
+
+		if (add)
+			Format(text, sizeof(text), "%s+", text);
+		else
+			Format(text, sizeof(text), "%s-", text);
+	}
+	else
+	{
+		Format(text, sizeof(text), "Save");
+	}
+
+	Format(text, sizeof(text), "%s %.1f", text, amount);
+
+	AddMenuItem(menu, value, text);
+}
+
+public ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
+{
+	if (action == MenuAction_Select)
+	{
+		new String:value[128];
+		if (GetMenuItem(menu, slot, value, sizeof(value)))
+		{
+			new String:values[5][32];
+			ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
+
+			new target = StringToInt(values[1]);
+			new loadoutSlot = StringToInt(values[2]);
+
+			new entity = g_iEquipment[target][loadoutSlot];
+
+			new Float:position[3];
+			GetEntPropVector(entity, Prop_Send, "m_vecOrigin", position);
+
+			if (StrEqual(values[0], "save"))
+			{
+				decl String:modelPath[PLATFORM_MAX_PATH];
+				GetClientModel(target, modelPath, sizeof(modelPath));
+
+				SavePlayerModelPosition(modelPath, position)
+			}
+			else
+			{
+				new axis = values[3][0];
+				new bool:add = bool:StringToInt(values[4]);
+
+				if (axis == 'x')
+				{
+					if (add)
+						position[0] += 0.5;
+					else
+						position[0] -= 0.5;
+				}
+				else if (axis == 'y')
+				{
+					if (add)
+						position[1] += 0.5;
+					else
+						position[1] -= 0.5;
+				} 
+				else if (axis == 'z')
+				{
+					if (add)
+						position[2] += 0.5;
+					else
+						position[2] -= 0.5;
+				}
+
+				TeleportEntity(entity, position, NULL_VECTOR, NULL_VECTOR); 
+				OpenEditorLoadoutSlot(client, target, loadoutSlot);				
+			}
+		}
+	}
+	else if (action == MenuAction_End)
+	{
+		CloseHandle(menu);
+	}
 }
