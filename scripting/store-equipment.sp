@@ -220,6 +220,7 @@ public Store_OnReloadItems()
 		
 	g_equipmentNameIndex = CreateTrie();
 	g_equipmentCount = 0;
+	g_playerModelCount = 0;
 }
 
 public LoadItem(const String:itemName[], const String:attrs[])
@@ -581,7 +582,7 @@ public Action:Command_OpenEditor(client, args)
 
 OpenEditor(client, target)
 {
-	new Handle:menu = CreateMenu(LoadoutSlotSelectHandle);
+	new Handle:menu = CreateMenu(Editor_LoadoutSlotSelectHandle);
 	SetMenuTitle(menu, "Select loadout slot:");
 
 	for (new index = 0, size = GetArraySize(g_loadoutSlotList); index < size; index++)
@@ -598,7 +599,7 @@ OpenEditor(client, target)
 	DisplayMenu(menu, client, 0);
 }
 
-public LoadoutSlotSelectHandle(Handle:menu, MenuAction:action, client, slot)
+public Editor_LoadoutSlotSelectHandle(Handle:menu, MenuAction:action, client, slot)
 {
 	if (action == MenuAction_Select)
 	{
@@ -608,7 +609,7 @@ public LoadoutSlotSelectHandle(Handle:menu, MenuAction:action, client, slot)
 			new String:values[2][16];
 			ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
 
-			OpenEditorLoadoutSlot(client, StringToInt(values[0]), StringToInt(values[1]));
+			Editor_OpenLoadoutSlotMenu(client, StringToInt(values[0]), StringToInt(values[1]));
 		}
 	}
 	else if (action == MenuAction_End)
@@ -617,24 +618,24 @@ public LoadoutSlotSelectHandle(Handle:menu, MenuAction:action, client, slot)
 	}
 }
 
-OpenEditorLoadoutSlot(client, target, loadoutSlot, Float:amount = 0.5)
+Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, Float:amount = 0.5)
 {
-	new Handle:menu = CreateMenu(ActionSelectHandle);
+	new Handle:menu = CreateMenu(Editor_ActionSelectHandle);
 	SetMenuTitle(menu, "Select loadout slot:");
 
 	for (new bool:add = true; add >= false; add--)
 	{
 		for (new axis = 'x'; axis <= 'z'; axis++)
 		{
-			AddEditorMenuItem(menu, target, "position", loadoutSlot, axis, add, amount);
+			Editor_AddMenuItem(menu, target, "position", loadoutSlot, axis, add, amount);
 		}
 	}
 
-	AddEditorMenuItem(menu, target, "save", loadoutSlot);
+	Editor_AddMenuItem(menu, target, "save", loadoutSlot);
 	DisplayMenu(menu, client, 0);
 }
 
-AddEditorMenuItem(Handle:menu, target, const String:actionType[], loadoutSlot, axis = 0, bool:add = false, Float:amount = 0.0)
+Editor_AddMenuItem(Handle:menu, target, const String:actionType[], loadoutSlot, axis = 0, bool:add = false, Float:amount = 0.0)
 {
 	decl String:value[128];
 	Format(value, sizeof(value), "%s,%d,%d,%c,%b", actionType, target, loadoutSlot, axis, add);
@@ -660,7 +661,7 @@ AddEditorMenuItem(Handle:menu, target, const String:actionType[], loadoutSlot, a
 	AddMenuItem(menu, value, text);
 }
 
-public ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
+public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 {
 	if (action == MenuAction_Select)
 	{
@@ -683,7 +684,7 @@ public ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 				decl String:modelPath[PLATFORM_MAX_PATH];
 				GetClientModel(target, modelPath, sizeof(modelPath));
 
-				SavePlayerModelPosition(client, g_currentHats[target], modelPath, position);
+				Editor_SavePlayerModelAttributes(client, g_currentHats[target], modelPath, position);
 			}
 			else
 			{
@@ -713,7 +714,7 @@ public ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 				}
 
 				TeleportEntity(entity, position, NULL_VECTOR, NULL_VECTOR); 
-				OpenEditorLoadoutSlot(client, target, loadoutSlot);				
+				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);				
 			}
 		}
 	}
@@ -723,104 +724,71 @@ public ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 	}
 }
 
-SavePlayerModelPosition(client, const String:itemName[], const String:modelPath[], Float:position[])
+Editor_SavePlayerModelAttributes(client, const String:itemName[], const String:modelPath[], Float:position[])
 {
-	new Handle:pack = CreateDataPack();
-	WritePackCell(pack, client);
-	WritePackString(pack, modelPath);
-	WritePackFloat(pack, position[0]);
-	WritePackFloat(pack, position[1]);
-	WritePackFloat(pack, position[2]);
+	new Float:angles[] = {0.0, 0.0, 0.0};
 
-	Store_GetItemAttributes(itemName, Editor_GetItemAttributesCallback, pack);
-}
-
-public Editor_GetItemAttributesCallback(const String:itemName[], const String:attrs[], any:pack)
-{
-	ResetPack(pack);
-
-	new client = ReadPackCell(pack);
-
-	decl String:modelPath[PLATFORM_MAX_PATH];
-	ReadPackString(pack, modelPath, sizeof(modelPath));
-
-	new Float:position[3];
-	position[0] = ReadPackFloat(pack);
-	position[1] = ReadPackFloat(pack);
-	position[2] = ReadPackFloat(pack);
-
-	CloseHandle(pack);
-
-	new Handle:json = json_load(attrs);
-
-	new Handle:angles = json_object_get(json, "angles");
-
-	new Handle:playerModels = json_object_get(json, "playermodels");
-
-	new bool:appendPlayerModels = false;
-	if (playerModels == INVALID_HANDLE)
+	new equipment = -1;
+	if (!GetTrieValue(g_equipmentNameIndex, itemName, equipment))
 	{
-		playerModels = json_array();
-		appendPlayerModels = true;
+		PrintToChat(client, "%s%t", STORE_PREFIX, "No item attributes");
+		return;
 	}
+	
+	new Handle:json = json_object();
+	json_object_set_new(json, "model", json_string(g_equipment[equipment][EquipmentModelPath]));
+	Editor_AppendJSONVector(json, "position", g_equipment[equipment][EquipmentPosition]);
+	Editor_AppendJSONVector(json, "angles", g_equipment[equipment][EquipmentAngles]);
+	json_object_set_new(json, "attachment", json_string(g_equipment[equipment][EquipmentAttachment]));
 
-	new Handle:playerModel = INVALID_HANDLE;
-	new index = 0;
-	for (new size = json_array_size(playerModels); index < size; index++)
-	{
-		playerModel = json_array_get(playerModels, index);
+	new Handle:playerModels = json_array();
 
-		if (playerModel == INVALID_HANDLE)
-			continue;
-
-		if (json_typeof(playerModel) != JSON_OBJECT)
+	new bool:append = true;
+	for (new j = 0; j < g_playerModelCount; j++)
+	{	
+		if (!StrEqual(g_equipment[equipment][EquipmentName], g_playerModels[j][EquipmentName]))
 		{
-			CloseHandle(playerModel);
 			continue;
 		}
 
-		json_object_get_string(playerModel, "playermodel", g_playerModels[g_playerModelCount][PlayerModelPath], PLATFORM_MAX_PATH);
+		if (StrEqual(modelPath, g_playerModels[j][PlayerModelPath], false))
+		{
+			for (new i = 0; i < 3; i++)
+				g_playerModels[j][Position][i] = position[i];
 
-		if (StrEqual(g_playerModels[g_playerModelCount][PlayerModelPath], modelPath))
-			return;
+			append = false;
+		}
+
+		Editor_AppendJSONPlayerModel(playerModels, 
+			g_playerModels[j][PlayerModelPath], 
+			g_playerModels[j][Position], 
+			g_playerModels[j][Angles]);
 	}
 
-	new bool:appendPlayerModel = false;
-	if (playerModel == INVALID_HANDLE)
+	if (append)
 	{
-		playerModel = json_object();
-		appendPlayerModel = true;
+		strcopy(g_playerModels[g_playerModelCount][PlayerModelPath], PLATFORM_MAX_PATH, modelPath);
+		strcopy(g_playerModels[g_playerModelCount][EquipmentName], STORE_MAX_NAME_LENGTH, itemName);
+
+		for (new i = 0; i < 3; i++)
+		{
+			g_playerModels[g_playerModelCount][Position][i] = position[i];
+			g_playerModels[g_playerModelCount][Angles][i] = angles[i];
+		}
+
+		Editor_AppendJSONPlayerModel(playerModels, 
+			g_playerModels[g_playerModelCount][PlayerModelPath], 
+			g_playerModels[g_playerModelCount][Position], 
+			g_playerModels[g_playerModelCount][Angles]);
+
+		g_playerModelCount++;
 	}
 
-	json_object_set_new(playerModel, "playermodel", json_string(modelPath));	
-
-	new Handle:playerModelPosition = json_object_get(playerModel, "position");
-	if (playerModelPosition == INVALID_HANDLE)
-		playerModelPosition = json_array();
-
-	json_array_clear(playerModelPosition);
-
-	json_object_set_new(playerModel, "angles", angles);	
-
-	for (new i = 0; i <= 2; i++)
-		json_array_append_new(playerModelPosition, json_real(position[i]));
-
-	json_object_set_new(playerModel, "position", playerModelPosition);	
-	
-	if (appendPlayerModel)
-		json_array_append_new(playerModels, playerModel);
-	else
-		json_array_set_new(playerModels, index, playerModel);
-
-	if (appendPlayerModels)
-		json_object_set_new(json, "playermodels", playerModels);	
+	json_object_set_new(json, "playermodels", playerModels);
 
 	new String:sJSON[10 * 1024];
-	json_dump(json, sJSON, sizeof(sJSON));
+	json_dump(json, sJSON, sizeof(sJSON));	
 
-	/*CloseHandle(playerModelPosition);
-	CloseHandle(playerModels);
-	CloseHandle(playerModel);*/
 	CloseHandle(json);
 
 	Store_WriteItemAttributes(itemName, sJSON, Editor_OnSave, client);
@@ -829,4 +797,24 @@ public Editor_GetItemAttributesCallback(const String:itemName[], const String:at
 public Editor_OnSave(bool:success, any:client)
 {
 	PrintToChat(client, "%sSave successful.", STORE_PREFIX);
+}
+
+Editor_AppendJSONVector(Handle:json, const String:key[], Float:vector[])
+{
+	new Handle:array = json_array();
+
+	for (new i = 0; i < 3; i++)
+		json_array_append_new(array, json_real(float(RoundToCeil(vector[i] * 100.0)) / 100.0));
+
+	json_object_set_new(json, key, array);		
+}
+
+Editor_AppendJSONPlayerModel(Handle:json, const String:modelPath[], Float:position[], Float:angles[])
+{
+	new Handle:playerModel = json_object();
+	json_object_set_new(playerModel, "playermodel", json_string(modelPath));
+	Editor_AppendJSONVector(playerModel, "position", position);
+	Editor_AppendJSONVector(playerModel, "angles", angles);
+
+	json_array_append_new(json, playerModel);
 }
