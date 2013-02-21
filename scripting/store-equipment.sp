@@ -43,7 +43,7 @@ new Handle:g_loadoutSlotList = INVALID_HANDLE;
 new g_playerModels[1024][EquipmentPlayerModelSettings];
 new g_playerModelCount = 0;
 
-new g_currentHats[MAXPLAYERS+1];
+new String:g_currentHats[MAXPLAYERS+1][STORE_MAX_NAME_LENGTH];
 new g_iEquipment[MAXPLAYERS+1][32];
 
 /**
@@ -264,7 +264,10 @@ public LoadItem(const String:itemName[], const String:attrs[])
 				continue;
 
 			if (json_typeof(playerModel) != JSON_OBJECT)
+			{
+				CloseHandle(playerModel);
 				continue;
+			}
 
 			json_object_get_string(playerModel, "playermodel", g_playerModels[g_playerModelCount][PlayerModelPath], PLATFORM_MAX_PATH);
 
@@ -465,7 +468,7 @@ bool:Equip(client, loadoutSlot, const String:name[])
 	DispatchSpawn(ent);	
 	AcceptEntityInput(ent, "TurnOn", ent, ent, 0);
 	
-	g_currentHats[client] = itemId;
+	strcopy(g_currentHats[client], STORE_MAX_NAME_LENGTH, name);
 	g_iEquipment[client][loadoutSlot] = ent;
 	
 	SDKHook(ent, SDKHook_SetTransmit, ShouldHide);
@@ -501,7 +504,7 @@ UnequipAll(client)
 
 public Action:ShouldHide(ent, client)
 {
-	/*if (g_toggleEffects)
+	if (g_toggleEffects)
 		if (!ShowClientEffects(client))
 			return Plugin_Handled;
 			
@@ -518,7 +521,7 @@ public Action:ShouldHide(ent, client)
 			if (ent == g_iEquipment[GetEntPropEnt(client, Prop_Send, "m_hObserverTarget")][index])
 				return Plugin_Handled;
 		}
-	}*/
+	}
 	
 	return Plugin_Continue;
 }
@@ -580,7 +583,6 @@ OpenEditor(client, target)
 {
 	new Handle:menu = CreateMenu(LoadoutSlotSelectHandle);
 	SetMenuTitle(menu, "Select loadout slot:");
-	PrintToChat(client, "%d", GetArraySize(g_loadoutSlotList));
 
 	for (new index = 0, size = GetArraySize(g_loadoutSlotList); index < size; index++)
 	{
@@ -647,13 +649,13 @@ AddEditorMenuItem(Handle:menu, target, const String:actionType[], loadoutSlot, a
 			Format(text, sizeof(text), "%s+", text);
 		else
 			Format(text, sizeof(text), "%s-", text);
+
+		Format(text, sizeof(text), "%s %.1f", text, amount);
 	}
 	else
 	{
 		Format(text, sizeof(text), "Save");
 	}
-
-	Format(text, sizeof(text), "%s %.1f", text, amount);
 
 	AddMenuItem(menu, value, text);
 }
@@ -681,7 +683,7 @@ public ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 				decl String:modelPath[PLATFORM_MAX_PATH];
 				GetClientModel(target, modelPath, sizeof(modelPath));
 
-				SavePlayerModelPosition(modelPath, position)
+				SavePlayerModelPosition(client, g_currentHats[target], modelPath, position);
 			}
 			else
 			{
@@ -719,4 +721,112 @@ public ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 	{
 		CloseHandle(menu);
 	}
+}
+
+SavePlayerModelPosition(client, const String:itemName[], const String:modelPath[], Float:position[])
+{
+	new Handle:pack = CreateDataPack();
+	WritePackCell(pack, client);
+	WritePackString(pack, modelPath);
+	WritePackFloat(pack, position[0]);
+	WritePackFloat(pack, position[1]);
+	WritePackFloat(pack, position[2]);
+
+	Store_GetItemAttributes(itemName, Editor_GetItemAttributesCallback, pack);
+}
+
+public Editor_GetItemAttributesCallback(const String:itemName[], const String:attrs[], any:pack)
+{
+	ResetPack(pack);
+
+	new client = ReadPackCell(pack);
+
+	decl String:modelPath[PLATFORM_MAX_PATH];
+	ReadPackString(pack, modelPath, sizeof(modelPath));
+
+	new Float:position[3];
+	position[0] = ReadPackFloat(pack);
+	position[1] = ReadPackFloat(pack);
+	position[2] = ReadPackFloat(pack);
+
+	CloseHandle(pack);
+
+	new Handle:json = json_load(attrs);
+
+	new Handle:angles = json_object_get(json, "angles");
+
+	new Handle:playerModels = json_object_get(json, "playermodels");
+
+	new bool:appendPlayerModels = false;
+	if (playerModels == INVALID_HANDLE)
+	{
+		playerModels = json_array();
+		appendPlayerModels = true;
+	}
+
+	new Handle:playerModel = INVALID_HANDLE;
+	new index = 0;
+	for (new size = json_array_size(playerModels); index < size; index++)
+	{
+		playerModel = json_array_get(playerModels, index);
+
+		if (playerModel == INVALID_HANDLE)
+			continue;
+
+		if (json_typeof(playerModel) != JSON_OBJECT)
+		{
+			CloseHandle(playerModel);
+			continue;
+		}
+
+		json_object_get_string(playerModel, "playermodel", g_playerModels[g_playerModelCount][PlayerModelPath], PLATFORM_MAX_PATH);
+
+		if (StrEqual(g_playerModels[g_playerModelCount][PlayerModelPath], modelPath))
+			return;
+	}
+
+	new bool:appendPlayerModel = false;
+	if (playerModel == INVALID_HANDLE)
+	{
+		playerModel = json_object();
+		appendPlayerModel = true;
+	}
+
+	json_object_set_new(playerModel, "playermodel", json_string(modelPath));	
+
+	new Handle:playerModelPosition = json_object_get(playerModel, "position");
+	if (playerModelPosition == INVALID_HANDLE)
+		playerModelPosition = json_array();
+
+	json_array_clear(playerModelPosition);
+
+	json_object_set_new(playerModel, "angles", angles);	
+
+	for (new i = 0; i <= 2; i++)
+		json_array_append_new(playerModelPosition, json_real(position[i]));
+
+	json_object_set_new(playerModel, "position", playerModelPosition);	
+	
+	if (appendPlayerModel)
+		json_array_append_new(playerModels, playerModel);
+	else
+		json_array_set_new(playerModels, index, playerModel);
+
+	if (appendPlayerModels)
+		json_object_set_new(json, "playermodels", playerModels);	
+
+	new String:sJSON[10 * 1024];
+	json_dump(json, sJSON, sizeof(sJSON));
+
+	/*CloseHandle(playerModelPosition);
+	CloseHandle(playerModels);
+	CloseHandle(playerModel);*/
+	CloseHandle(json);
+
+	Store_WriteItemAttributes(itemName, sJSON, Editor_OnSave, client);
+}
+
+public Editor_OnSave(bool:success, any:client)
+{
+	PrintToChat(client, "%sSave successful.", STORE_PREFIX);
 }

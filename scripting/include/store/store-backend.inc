@@ -18,6 +18,13 @@
 functag Store_GetItemsCallback public(items[], count, any:data);
 functag Store_GetUserItemsCallback public(useritems[], bool:equipped[], useritemCount[], count, loadoutId, any:data);
 
+funcenum Store_ItemGetAttributesCallback 
+{
+	public(const String:itemName[], const String:attrs[]),
+	public(const String:itemName[], const String:attrs[], any:data)
+}
+
+
 functag Store_GetCreditsCallback public(credits, any:data);
 functag Store_GiveCreditsCallback public(accountId, any:data);
 
@@ -30,6 +37,16 @@ forward Store_OnDatabaseInitialized();
 
 forward Store_OnReloadItems();
 forward Store_OnReloadItemsPost();
+
+enum Store_AquireMethod
+{
+	Store_Shop,
+	Store_Trade,
+	Store_Gift,
+	Store_Admin,
+	Store_Web,
+	Store_Unknown
+}
 
 /**
  * Registers a player in the database:
@@ -168,6 +185,7 @@ native Store_GetCategoryPluginRequired(id, String:pluginRequired[], maxlength);
  *  - category_id (cell)
  *  - is_buyable (cell)
  *  - is_tradeable (cell)
+ *  - is_refundable (cell)
  *  - type (string)
  *
  * To use it, set it to a trie with some or all of the above properties.
@@ -342,6 +360,28 @@ native bool:Store_IsItemBuyable(id);
 native bool:Store_IsItemTradeable(id);
 
 /**
+ * Determines whether or not an item is refundable.
+ * 
+ * IMPORTANT: This method only works if the store-backend module has a cache
+ * of all items.
+ * 
+ * @param id                Item's ID.
+ *
+ * @return True if refundable, false otherwise.
+ */
+native bool:Store_IsItemRefundable(id);
+
+/** 
+ * Retrieves item attributes asynchronously.
+ *
+ * @param itemName			Item's name.
+ *
+ * @noreturn
+ */
+native Store_GetItemAttributes(const String:itemName[], Store_ItemGetAttributesCallback:callback = Store_ItemGetAttributesCallback:0, any:data = 0);
+native Store_WriteItemAttributes(const String:itemName[], const String:attrs[], Store_BuyItemCallback:callback = Store_BuyItemCallback:0, any:data = 0);
+
+/**
  * Retrieves loadouts from the database. 
  *
  * The store-backend module builds a cache of the loadouts retrieved the first time 
@@ -458,6 +498,17 @@ native Store_GetLoadoutTeam(id);
  * The callback will provide an array of the items' IDs. You can then loop the array,
  * and find info about each item using the Store_GetItem* methods.
  * 
+ * You can use the filter parameter to filter items returned by the following properties:
+ *  - category_id (cell)
+ *  - is_buyable (cell)
+ *  - is_tradeable (cell)
+ *  - is_refundable (cell)
+ *  - type (string)
+ *
+ * To use it, set it to a trie with some or all of the above properties.
+ * IMPORTANT: You are *not* resposible for closing the filter trie's handle, 
+ *            the store-backend module is.
+ *
  * The items returned by this method are grouped by the item's name. That means that 
  * if a player has multiple items with the same name (the unique identifier of the item, NOT its 
  * display name), then the array will only have one element of that item.
@@ -469,9 +520,13 @@ native Store_GetLoadoutTeam(id);
  * provides the equipped[] array.
  *
  * For example:
- * 
- *  Store_GetUserItems(Store_GetClientAccountID(client), 
- *                      categoryId, 
+ *
+ *	new Handle:filter = CreateTrie();
+ * 	SetTrieString(filter, "type", "equipment");
+ *	SetTrieValue(filter, "is_refundable", 1); 
+ *
+ *  Store_GetUserItems(filter,
+ *                      Store_GetClientAccountID(client), 
  *                      Store_GetClientLoadout(client), 
  *                      GetUserItemsCallback);
  *
@@ -492,15 +547,15 @@ native Store_GetLoadoutTeam(id);
  *
  * As with all other store-backend methods, this method is completely asynchronous.
  *
+ * @param filter			A trie which will be used to filter the loadouts returned.
  * @param accountId		    The account ID of the player, use Store_GetClientAccountID to convert a client index to account ID.
- * @param categoryId        The category of the items you want to retrieve.
  * @param loadoutId         The loadout which will be used to determine whether an item is equipped or not.
  * @param callback		    A callback which will be called when the items are loaded.
  * @param data              Extra data value to pass to the callback.
  *
  * @noreturn
  */
-native Store_GetUserItems(accountId, categoryId, loadoutId, Store_GetUserItemsCallback:callback, any:data = 0);
+native Store_GetUserItems(Handle:filter, accountId, loadoutId, Store_GetUserItemsCallback:callback, any:data = 0);
 
 /**
  * Retrieves the amount of the same item a user has.
@@ -561,6 +616,38 @@ native Store_GiveCredits(accountId, credits, Store_GiveCreditsCallback:callback 
  * @noreturn
  */
 native Store_GiveCreditsToUsers(accountIds[], accountIdsLength, credits);
+
+/**
+ * Gives multiple players different amounts of credits. 
+ * 
+ * You can also set the credits parameter to a negative value to take credits
+ * from the players.
+ *
+ * As with all other store-backend methods, this method is completely asynchronous.
+ *
+ * @param accountIds	    The account IDs of the players, use Store_GetClientAccountID to convert a client index to account ID.
+ * @param accountIdsLength  Players count.
+ * @param credits           Amount of credits per player. 
+ *
+ * @noreturn
+ */
+native Store_GiveDifferentCreditsToUsers(accountIds[], accountIdsLength, credits[]);
+
+/**
+ * Gives player an item.
+ *
+ * As with all other store-backend methods, this method is completely asynchronous.
+ *
+ * @param accountId		    The account ID of the player, use Store_GetClientAccountID to convert a client index to account ID.
+ * @param itemId 			The ID of the item to give to the player.
+ * @param aquireMethod 		
+ * @param callback		    A callback which will be called when the operation is finished.
+ * @param plugin			The plugin owner of the callback.
+ * @param data              Extra data value to pass to the callback.
+ *
+ * @noreturn
+ */
+native Store_GiveItem(accountId, itemId, Store_AquireMethod:aquireMethod = Store_Unknown, Store_GiveCreditsCallback:callback = Store_GiveCreditsCallback:INVALID_HANDLE, any:data = 0);
 
 /**
  * Buys an item for a player, using his credits.
@@ -715,14 +802,20 @@ public __pl_store_backend_SetNTVOptional()
 	MarkNativeAsOptional("Store_GetItemType");
 	MarkNativeAsOptional("Store_GetItemLoadoutSlot");
 	MarkNativeAsOptional("Store_GetItemPrice");
+	MarkNativeAsOptional("Store_IsItemTradeable");
+	MarkNativeAsOptional("Store_IsItemBuyable");
+	MarkNativeAsOptional("Store_IsItemRefundable");	
 	MarkNativeAsOptional("Store_GetItemAttributes");
-	
+	MarkNativeAsOptional("Store_WriteItemAttributes");
+
 	MarkNativeAsOptional("Store_GetUserItems");
 	MarkNativeAsOptional("Store_GetUserItemCount");
 	MarkNativeAsOptional("Store_GetCredits");
 	
 	MarkNativeAsOptional("Store_GiveCredits");
-	
+	MarkNativeAsOptional("Store_GiveCreditsToUsers");
+	MarkNativeAsOptional("Store_GiveDifferentCreditsToUsers");
+
 	MarkNativeAsOptional("Store_BuyItem");
 	MarkNativeAsOptional("Store_RemoveUserItem");
 	
