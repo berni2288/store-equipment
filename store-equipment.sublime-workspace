@@ -4,8 +4,12 @@
 		"selected_items":
 		[
 			[
+				"PlayerModel",
+				"PlayerModelPosition"
+			],
+			[
 				"si",
-				"size"
+				"sizeof"
 			],
 			[
 				"On",
@@ -43,7 +47,15 @@
 			"file": "scripting/store-equipment.sp",
 			"settings":
 			{
-				"buffer_size": 14862,
+				"buffer_size": 22467,
+				"line_ending": "Windows"
+			}
+		},
+		{
+			"file": "scripting/include/store/store-core.inc",
+			"settings":
+			{
+				"buffer_size": 1571,
 				"line_ending": "Windows"
 			}
 		}
@@ -76,6 +88,10 @@
 	},
 	"file_history":
 	[
+		"/C/Users/Alon/Downloads/plugin_cats.sp",
+		"/C/Users/Alon/Documents/GitHub/store-equipment/scripting/include/store/store-backend.inc",
+		"/C/Users/Alon/Documents/GitHub/store-equipment/scripting/include/smjansson.inc",
+		"/C/Users/Alon/AppData/Local/Temp/7zO5FC4.tmp/adminlist_advanced.sp",
 		"/C/Users/Alon/Documents/GitHub/store/scripting/store-trails.sp",
 		"/C/Users/Alon/Documents/GitHub/store/scripting/store-equipment.sp",
 		"/C/Users/Alon/Documents/GitHub/store/scripting/store-skins.sp",
@@ -149,6 +165,7 @@
 		"height": 0.0,
 		"where_history":
 		[
+			""
 		]
 	},
 	"find_state":
@@ -156,6 +173,28 @@
 		"case_sensitive": false,
 		"find_history":
 		[
+			"printtoserver",
+			"printtochat",
+			"loaditem",
+			"g_currentHats",
+			"ReloadItem",
+			"g_hPluginCat",
+			"BuildPluginList",
+			"listadeadmins",
+			"json_object_iter",
+			"iter",
+			"/*",
+			"Command_OpenEditor",
+			"json_array_append_new",
+			"json_real",
+			"json_float",
+			"json_object_set_new",
+			"printtochat",
+			"save",
+			"Store_GetItemAttributes",
+			"SavePlayerModelPosition",
+			"g_currentHats",
+			"g_iEquipment",
 			"printtoserver",
 			"printtochat",
 			"EquipmentModelPath",
@@ -261,29 +300,7 @@
 			"KillTrail",
 			"PlayerSpawn",
 			"playerspawn",
-			"g_trailTimers",
-			"KillTrail",
-			"gtrails",
-			"HandleGTrails",
-			"Store_GetUserItemCountCallback",
-			"GetUserItemCount",
-			"getuseritemcount",
-			"Store_GetUserItemCount",
-			"Store_GetUserItemCountCallback",
-			"Store_HasItem",
-			"getuseritems",
-			"HasItem",
-			"json_typeof",
-			"json_is_string",
-			"Handle:json_object_get(",
-			"stock json_object_get(",
-			"json_object_get(",
-			"json_object_get",
-			"json_object_get_string",
-			"json_object_get_float",
-			"json_array_get_float",
-			"position",
-			"g_SpriteModel"
+			"g_trailTimers"
 		],
 		"highlight": true,
 		"in_selection": false,
@@ -301,7 +318,7 @@
 	"groups":
 	[
 		{
-			"selected": 0,
+			"selected": 1,
 			"sheets":
 			[
 				{
@@ -309,15 +326,15 @@
 					"file": "scripting/store-equipment.sp",
 					"settings":
 					{
-						"buffer_size": 14862,
+						"buffer_size": 22467,
 						"regions":
 						{
 						},
 						"selection":
 						[
 							[
-								991,
-								991
+								9756,
+								9756
 							]
 						],
 						"settings":
@@ -326,7 +343,33 @@
 							"translate_tabs_to_spaces": false
 						},
 						"translation.x": 0.0,
-						"translation.y": 552.0,
+						"translation.y": 4889.0,
+						"zoom_level": 1.0
+					},
+					"type": "text"
+				},
+				{
+					"buffer": 1,
+					"file": "scripting/include/store/store-core.inc",
+					"settings":
+					{
+						"buffer_size": 1571,
+						"regions":
+						{
+						},
+						"selection":
+						[
+							[
+								159,
+								159
+							]
+						],
+						"settings":
+						{
+							"syntax": "Packages/SourcePawn/sourcepawn.tmLanguage"
+						},
+						"translation.x": 0.0,
+						"translation.y": 0.0,
 						"zoom_level": 1.0
 					},
 					"type": "text"
@@ -367,7 +410,7 @@
 	"menu_visible": true,
 	"output.exec":
 	{
-		"height": 101.0
+		"height": 98.0
 	},
 	"replace":
 	{

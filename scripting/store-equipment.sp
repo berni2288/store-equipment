@@ -46,6 +46,7 @@ new g_playerModelCount = 0;
 new String:g_currentHats[MAXPLAYERS+1][STORE_MAX_NAME_LENGTH];
 new g_iEquipment[MAXPLAYERS+1][32];
 
+new bool:g_restartGame = false;
 /**
  * Called before plugin is loaded.
  * 
@@ -674,46 +675,78 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 			new target = StringToInt(values[1]);
 			new loadoutSlot = StringToInt(values[2]);
 
-			new entity = g_iEquipment[target][loadoutSlot];
+			//new entity = g_iEquipment[target][loadoutSlot];
 
-			new Float:position[3];
-			GetEntPropVector(entity, Prop_Send, "m_vecOrigin", position);
+			decl String:modelPath[PLATFORM_MAX_PATH];
+			GetClientModel(target, modelPath, sizeof(modelPath));
+
+			new axis = values[3][0];
+			new bool:add = bool:StringToInt(values[4]);
+
+			new equipment = -1;
+			if (!GetTrieValue(g_equipmentNameIndex, g_currentHats[target], equipment))
+			{
+				PrintToChat(client, "%s%t", STORE_PREFIX, "No item attributes");
+				return;
+			}		
+
+			new playerModel = -1;
+			for (new j = 0; j < g_playerModelCount; j++)
+			{	
+				if (!StrEqual(g_currentHats[target], g_playerModels[j][EquipmentName]))
+					continue;
+
+				if (!StrEqual(modelPath, g_playerModels[j][PlayerModelPath], false))
+					continue;
+
+				playerModel = j;
+				break;
+			}
+
+			if (playerModel == -1)
+			{
+				strcopy(g_playerModels[g_playerModelCount][PlayerModelPath], PLATFORM_MAX_PATH, modelPath);
+				strcopy(g_playerModels[g_playerModelCount][EquipmentName], STORE_MAX_NAME_LENGTH, g_currentHats[target]);
+
+				for (new i = 0; i < 3; i++)
+				{
+					g_playerModels[g_playerModelCount][Position][i] = g_equipment[equipment][EquipmentPosition][i];
+					g_playerModels[g_playerModelCount][Angles][i] = g_equipment[equipment][EquipmentAngles][i];
+				}
+
+				playerModel = g_playerModelCount;
+				g_playerModelCount++;
+			}
 
 			if (StrEqual(values[0], "save"))
 			{
-				decl String:modelPath[PLATFORM_MAX_PATH];
-				GetClientModel(target, modelPath, sizeof(modelPath));
-
-				Editor_SavePlayerModelAttributes(client, g_currentHats[target], modelPath, position);
+				Editor_SavePlayerModelAttributes(client, equipment);
 			}
 			else
 			{
-				new axis = values[3][0];
-				new bool:add = bool:StringToInt(values[4]);
-
 				if (axis == 'x')
 				{
 					if (add)
-						position[0] += 0.5;
+						g_playerModels[playerModel][Position][0] += 0.5;
 					else
-						position[0] -= 0.5;
+						g_playerModels[playerModel][Position][0] -= 0.5;
 				}
 				else if (axis == 'y')
 				{
 					if (add)
-						position[1] += 0.5;
+						g_playerModels[playerModel][Position][1] += 0.5;
 					else
-						position[1] -= 0.5;
+						g_playerModels[playerModel][Position][1] -= 0.5;
 				} 
 				else if (axis == 'z')
 				{
 					if (add)
-						position[2] += 0.5;
+						g_playerModels[playerModel][Position][2] += 0.5;
 					else
-						position[2] -= 0.5;
+						g_playerModels[playerModel][Position][2] -= 0.5;
 				}
 
-				TeleportEntity(entity, position, NULL_VECTOR, NULL_VECTOR); 
+				Equip(target, loadoutSlot, g_currentHats[target]);
 				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);				
 			}
 		}
@@ -724,17 +757,8 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 	}
 }
 
-Editor_SavePlayerModelAttributes(client, const String:itemName[], const String:modelPath[], Float:position[])
-{
-	new Float:angles[] = {0.0, 0.0, 0.0};
-
-	new equipment = -1;
-	if (!GetTrieValue(g_equipmentNameIndex, itemName, equipment))
-	{
-		PrintToChat(client, "%s%t", STORE_PREFIX, "No item attributes");
-		return;
-	}
-	
+Editor_SavePlayerModelAttributes(client, equipment)
+{	
 	new Handle:json = json_object();
 	json_object_set_new(json, "model", json_string(g_equipment[equipment][EquipmentModelPath]));
 	Editor_AppendJSONVector(json, "position", g_equipment[equipment][EquipmentPosition]);
@@ -743,45 +767,15 @@ Editor_SavePlayerModelAttributes(client, const String:itemName[], const String:m
 
 	new Handle:playerModels = json_array();
 
-	new bool:append = true;
 	for (new j = 0; j < g_playerModelCount; j++)
 	{	
 		if (!StrEqual(g_equipment[equipment][EquipmentName], g_playerModels[j][EquipmentName]))
-		{
 			continue;
-		}
-
-		if (StrEqual(modelPath, g_playerModels[j][PlayerModelPath], false))
-		{
-			for (new i = 0; i < 3; i++)
-				g_playerModels[j][Position][i] = position[i];
-
-			append = false;
-		}
 
 		Editor_AppendJSONPlayerModel(playerModels, 
 			g_playerModels[j][PlayerModelPath], 
 			g_playerModels[j][Position], 
 			g_playerModels[j][Angles]);
-	}
-
-	if (append)
-	{
-		strcopy(g_playerModels[g_playerModelCount][PlayerModelPath], PLATFORM_MAX_PATH, modelPath);
-		strcopy(g_playerModels[g_playerModelCount][EquipmentName], STORE_MAX_NAME_LENGTH, itemName);
-
-		for (new i = 0; i < 3; i++)
-		{
-			g_playerModels[g_playerModelCount][Position][i] = position[i];
-			g_playerModels[g_playerModelCount][Angles][i] = angles[i];
-		}
-
-		Editor_AppendJSONPlayerModel(playerModels, 
-			g_playerModels[g_playerModelCount][PlayerModelPath], 
-			g_playerModels[g_playerModelCount][Position], 
-			g_playerModels[g_playerModelCount][Angles]);
-
-		g_playerModelCount++;
 	}
 
 	json_object_set_new(json, "playermodels", playerModels);
@@ -791,12 +785,23 @@ Editor_SavePlayerModelAttributes(client, const String:itemName[], const String:m
 
 	CloseHandle(json);
 
-	Store_WriteItemAttributes(itemName, sJSON, Editor_OnSave, client);
+	Store_WriteItemAttributes(g_equipment[equipment][EquipmentName], sJSON, Editor_OnSave, client);
 }
 
 public Editor_OnSave(bool:success, any:client)
 {
 	PrintToChat(client, "%sSave successful.", STORE_PREFIX);
+	g_restartGame = true;
+	Store_ReloadItemCache();
+}
+
+public Store_OnReloadItemsPost()
+{
+	if (g_restartGame)
+	{
+		ServerCommand("mp_restartgame 1");
+		g_restartGame = false;
+	}
 }
 
 Editor_AppendJSONVector(Handle:json, const String:key[], Float:vector[])
@@ -804,7 +809,7 @@ Editor_AppendJSONVector(Handle:json, const String:key[], Float:vector[])
 	new Handle:array = json_array();
 
 	for (new i = 0; i < 3; i++)
-		json_array_append_new(array, json_real(float(RoundToCeil(vector[i] * 100.0)) / 100.0));
+		json_array_append_new(array, json_real(vector[i]));
 
 	json_object_set_new(json, key, array);		
 }
