@@ -202,6 +202,12 @@ public Action:SpawnTimer(Handle:timer, any:serial)
 	if (client == 0)
 		return Plugin_Continue;
 	
+	if (!IsClientInGame(client))
+		return Plugin_Continue;
+
+	if (IsFakeClient(client))
+		return Plugin_Continue;
+		
 	if (g_zombieReloaded && !ZR_IsClientHuman(client))
 		return Plugin_Continue;
 		
