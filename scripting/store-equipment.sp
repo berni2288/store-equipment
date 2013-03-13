@@ -14,11 +14,12 @@
 enum Equipment
 {
 	String:EquipmentName[STORE_MAX_NAME_LENGTH],
-	String:EquipmentModelPath[PLATFORM_MAX_PATH], 
+	String:EquipmentModelPath[PLATFORM_MAX_PATH],
 	Float:EquipmentPosition[3],
 	Float:EquipmentAngles[3],
 	String:EquipmentFlag[2],
-	String:EquipmentAttachment[32]
+	String:EquipmentAttachment[32],
+	bool:EquipmentHasPhysics
 }
 
 enum EquipmentPlayerModelSettings
@@ -43,10 +44,16 @@ new Handle:g_loadoutSlotList = INVALID_HANDLE;
 new g_playerModels[1024][EquipmentPlayerModelSettings];
 new g_playerModelCount = 0;
 
-new String:g_currentHats[MAXPLAYERS+1][STORE_MAX_NAME_LENGTH];
+new String:g_currentEquipment[MAXPLAYERS+1][32][STORE_MAX_NAME_LENGTH];
 new g_iEquipment[MAXPLAYERS+1][32];
 
 new bool:g_restartGame = false;
+
+new String:g_default_physics_model[PLATFORM_MAX_PATH];
+
+new g_player_death_equipment_effect;
+new String:g_player_death_dissolve_type[2];
+
 /**
  * Called before plugin is loaded.
  * 
@@ -79,6 +86,7 @@ public Plugin:myinfo =
  */
 public OnPluginStart()
 {
+	LoadConfig();
 	LoadTranslations("common.phrases");
 	LoadTranslations("store.phrases");
 	
@@ -100,6 +108,27 @@ public OnPluginStart()
 	RegAdminCmd("sm_editor", Command_OpenEditor, ADMFLAG_ROOT, "Opens equipment editor.");
 
 	Store_RegisterItemType("equipment", OnEquip, LoadItem);
+}
+
+/**
+ * Load plugin config.
+ */
+LoadConfig() 
+{
+	new Handle:kv = CreateKeyValues("root");
+	
+	decl String:path[PLATFORM_MAX_PATH];
+	BuildPath(Path_SM, path, sizeof(path), "configs/store/equipment.cfg");
+	
+	if (!FileToKeyValues(kv, path)) 
+	{
+		CloseHandle(kv);
+		SetFailState("Can't read config file %s", path);
+	}
+
+	g_player_death_equipment_effect = KvGetNum(kv, "player_death_equipment_effect");
+	KvGetString(kv, "player_death_dissolve_type", g_player_death_dissolve_type, sizeof(g_default_physics_model), "0");
+	KvGetString(kv, "default_physics_model", g_default_physics_model, sizeof(g_default_physics_model), "models/props_junk/metalbucket01a.mdl");
 }
 
 /**
@@ -239,6 +268,17 @@ public LoadItem(const String:itemName[], const String:attrs[])
 	new Handle:json = json_load(attrs);
 	json_object_get_string(json, "model", g_equipment[g_equipmentCount][EquipmentModelPath], PLATFORM_MAX_PATH);
 	json_object_get_string(json, "attachment", g_equipment[g_equipmentCount][EquipmentAttachment], 32);
+
+	g_equipment[g_equipmentCount][EquipmentHasPhysics] = false;
+	decl String:m_szRawPath[PLATFORM_MAX_PATH];
+	strcopy(m_szRawPath, sizeof(m_szRawPath), g_equipment[g_equipmentCount][EquipmentModelPath]);
+	new m_iDot = FindCharInString(m_szRawPath, '.', true);
+	if(m_iDot > 0)
+	{
+		m_szRawPath[m_iDot] = 0;
+		Format(m_szRawPath, PLATFORM_MAX_PATH, "%s.phy", m_szRawPath);
+		g_equipment[g_equipmentCount][EquipmentHasPhysics] = FileExists(m_szRawPath);
+	}
 
 	new Handle:position = json_object_get(json, "position");
 
@@ -394,39 +434,33 @@ public Store_ItemUseAction:OnEquip(client, itemId, bool:equipped)
 	}
 }
 
-bool:Equip(client, loadoutSlot, const String:name[])
+SetEntityVectors(source, ent, equipment)
 {
-	Unequip(client, loadoutSlot);
-		
-	new equipment = -1;
-	if (!GetTrieValue(g_equipmentNameIndex, name, equipment))
-	{
-		PrintToChat(client, "%s%t", STORE_PREFIX, "No item attributes");
-		return false;
-	}
-	
-	if (!LookupAttachment(client, g_equipment[equipment][EquipmentAttachment])) 
-	{
-		PrintToChat(client, "%s%t", STORE_PREFIX, "Player model unsupported");
-		return false;
-	}
-	
 	new Float:or[3];
 	new Float:ang[3];
 	new Float:fForward[3];
 	new Float:fRight[3];
 	new Float:fUp[3];
 	
-	GetClientAbsOrigin(client,or);
-	GetClientAbsAngles(client,ang);
+	GetEntPropVector(source, Prop_Send, "m_vecOrigin", or);
 
-	new String:clientModel[PLATFORM_MAX_PATH];
-	GetClientModel(client, clientModel, sizeof(clientModel));
+	decl String:clsname[255];
+	if (GetEntityNetClass(source, clsname, sizeof(clsname)))
+	{
+		if (FindSendPropOffs(clsname, "m_angRotation") >= 0)
+		{
+			GetEntPropVector(source, Prop_Send, "m_angRotation", ang);
+			//LogMessage("ang %i %i %i", ang[0], ang[1], ang[2]);
+		}
+	}
+
+	decl String:m_ModelName[PLATFORM_MAX_PATH];
+	GetEntPropString(source, Prop_Data, "m_ModelName", m_ModelName, sizeof(m_ModelName));
 	
 	new playerModel = -1;
 	for (new j = 0; j < g_playerModelCount; j++)
 	{	
-		if (StrEqual(g_equipment[equipment][EquipmentName], g_playerModels[j][EquipmentName]) && StrEqual(clientModel, g_playerModels[j][PlayerModelPath], false))
+		if (StrEqual(g_equipment[equipment][EquipmentName], g_playerModels[j][EquipmentName]) && StrEqual(m_ModelName, g_playerModels[j][PlayerModelPath], false))
 		{
 			playerModel = j;
 			break;
@@ -460,47 +494,168 @@ bool:Equip(client, loadoutSlot, const String:name[])
 		fOffset[1] = g_playerModels[playerModel][Position][1];
 		fOffset[2] = g_playerModels[playerModel][Position][2];		
 	}
-		
+
 	GetAngleVectors(ang, fForward, fRight, fUp);
 
 	or[0] += fRight[0]*fOffset[0]+fForward[0]*fOffset[1]+fUp[0]*fOffset[2];
 	or[1] += fRight[1]*fOffset[0]+fForward[1]*fOffset[1]+fUp[1]*fOffset[2];
 	or[2] += fRight[2]*fOffset[0]+fForward[2]*fOffset[1]+fUp[2]*fOffset[2];
 
+	TeleportEntity(ent, or, ang, NULL_VECTOR); 
+}
+
+GetEquipmentIndexFromName(const String:name[])
+{
+	new equipment = -1;
+	if (!GetTrieValue(g_equipmentNameIndex, name, equipment))
+	{
+		return -1;
+	}
+	return equipment;
+}
+
+bool:Equip(client, loadoutSlot, const String:name[])
+{
+	Unequip(client, loadoutSlot);
+
+	new equipment = GetEquipmentIndexFromName(name);
+	if (equipment < 0)
+	{
+		PrintToChat(client, "%s%t", STORE_PREFIX, "No item attributes");
+		return false;
+	}
+	
+	if (!LookupAttachment(client, g_equipment[equipment][EquipmentAttachment])) 
+	{
+		PrintToChat(client, "%s%t", STORE_PREFIX, "Player model unsupported");
+		return false;
+	}
+
 	new ent = CreateEntityByName("prop_dynamic_override");
 	DispatchKeyValue(ent, "model", g_equipment[equipment][EquipmentModelPath]);
-	DispatchKeyValue(ent, "spawnflags", "256");
+	// DispatchKeyValue(ent, "spawnflags", "256"); // don't output on +use flag
 	DispatchKeyValue(ent, "solid", "0");
-	SetEntPropEnt(ent, Prop_Send, "m_hOwnerEntity", client);
+	//SetEntPropEnt(ent, Prop_Send, "m_hOwnerEntity", client); // not needed ?
 	
-	DispatchSpawn(ent);	
-	AcceptEntityInput(ent, "TurnOn", ent, ent, 0);
+	DispatchSpawn(ent);
+
+	ActivateEntity(ent);
+	AcceptEntityInput(ent, "TurnOn");
+	AcceptEntityInput(ent, "Enable");
+
+	SetEntityVectors(client, ent, equipment);
 	
-	strcopy(g_currentHats[client], STORE_MAX_NAME_LENGTH, name);
+	SetVariantString("!activator");
+	AcceptEntityInput(ent, "SetParent", client, ent);
+	
+	SetVariantString(g_equipment[equipment][EquipmentAttachment]);
+	AcceptEntityInput(ent, "SetParentAttachmentMaintainOffset");
+
+	strcopy(g_currentEquipment[client][loadoutSlot], STORE_MAX_NAME_LENGTH, name);
 	g_iEquipment[client][loadoutSlot] = ent;
 	
 	SDKHook(ent, SDKHook_SetTransmit, ShouldHide);
-	
-	TeleportEntity(ent, or, ang, NULL_VECTOR); 
-	
-	SetVariantString("!activator");
-	AcceptEntityInput(ent, "SetParent", client, ent, 0);
-	
-	SetVariantString(g_equipment[equipment][EquipmentAttachment]);
-	AcceptEntityInput(ent, "SetParentAttachmentMaintainOffset", ent, ent, 0);
 	
 	return true;
 }
 
 bool:Unequip(client, loadoutSlot)
-{      
-	if (g_iEquipment[client][loadoutSlot] != 0 && IsValidEdict(g_iEquipment[client][loadoutSlot]))
-	{
-		SDKUnhook(g_iEquipment[client][loadoutSlot], SDKHook_SetTransmit, ShouldHide);
-		AcceptEntityInput(g_iEquipment[client][loadoutSlot], "Kill");
-	}
-	
+{
+	new oldequip = g_iEquipment[client][loadoutSlot];
 	g_iEquipment[client][loadoutSlot] = 0;
+
+	if (oldequip != 0 && IsValidEdict(oldequip))
+	{
+		SDKUnhook(oldequip, SDKHook_SetTransmit, ShouldHide);
+
+		switch(g_player_death_equipment_effect)
+		{
+			case 1:
+			{
+				new ragdoll = GetEntPropEnt(client, Prop_Send, "m_hRagdoll");
+				if (ragdoll > 0 && IsValidEdict(ragdoll))
+				{
+					new equipment = GetEquipmentIndexFromName(g_currentEquipment[client][loadoutSlot]); // assume equip exists ? prolly bad assumption
+
+					SetEntityVectors(ragdoll, oldequip, equipment);
+	
+					SetVariantString("!activator");
+					AcceptEntityInput(oldequip, "SetParent", ragdoll, oldequip);
+					
+					SetVariantString(g_equipment[equipment][EquipmentAttachment]);
+					AcceptEntityInput(oldequip, "SetParentAttachmentMaintainOffset");
+
+					//LogMessage("OK %i %i", equipment, oldequip);
+				}
+			}
+			case 2:
+			{
+				AcceptEntityInput(oldequip, "ClearParent");
+
+				new Float:velocity[3];
+				new ragdoll = GetEntPropEnt(client, Prop_Send, "m_hRagdoll");
+				if (ragdoll > 0 && IsValidEdict(ragdoll))
+				{
+					GetEntPropVector(ragdoll, Prop_Send, "m_vecRagdollVelocity", velocity);
+				}
+
+				velocity[0] *= 1.2;
+				velocity[1] *= 1.2;
+				velocity[2] *= 1.2;
+				
+				new ent;
+				new equipment = GetEquipmentIndexFromName(g_currentEquipment[client][loadoutSlot]); // assume equip exists ? prolly bad assumption
+				if (g_equipment[equipment][EquipmentHasPhysics])
+				{
+					ent = oldequip;
+				}
+				else
+				{
+					ent = CreateEntityByName("prop_physics_multiplayer");
+					DispatchKeyValue(ent, "model", g_default_physics_model);
+					DispatchKeyValue(ent, "spawnflags", "6");
+					DispatchKeyValue(ent, "physicsmode", "2");
+					DispatchKeyValue(ent, "rendermode", "10");
+					DispatchKeyValue(ent, "renderamt", "0");
+					DispatchSpawn(ent);
+					ActivateEntity(ent);
+
+					new Float:origin[3];
+					GetEntPropVector(oldequip, Prop_Send, "m_vecOrigin", origin);
+
+					TeleportEntity(ent, origin, NULL_VECTOR, velocity);
+
+					SetVariantString("!activator");
+					AcceptEntityInput(oldequip, "SetParent", ent, oldequip);
+				}
+
+				SetEntPropVector(ent, Prop_Data, "m_vecVelocity", velocity); // is this necessary ?
+			}
+			case 3:
+			{
+				AcceptEntityInput(oldequip, "ClearParent");
+				new dissolver = CreateEntityByName("env_entity_dissolver");
+
+				if (dissolver > 0)
+				{
+					DispatchKeyValue(dissolver, "dissolvetype", g_player_death_dissolve_type);
+					DispatchKeyValue(dissolver, "magnitude", "1");
+					DispatchKeyValue(dissolver, "target", "!activator");
+
+					AcceptEntityInput(dissolver, "Dissolve", oldequip);
+					AcceptEntityInput(dissolver, "Kill");
+				}
+				else 
+				{
+					AcceptEntityInput(oldequip, "Kill");
+				}
+			}
+			default:
+			{
+				AcceptEntityInput(oldequip, "Kill");
+			}
+		}
+	}
 	return true;
 }
 
@@ -689,17 +844,17 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 			new axis = values[3][0];
 			new bool:add = bool:StringToInt(values[4]);
 
-			new equipment = -1;
-			if (!GetTrieValue(g_equipmentNameIndex, g_currentHats[target], equipment))
+			new equipment = GetEquipmentIndexFromName(g_currentEquipment[target][loadoutSlot]);
+			if (equipment < 0)
 			{
 				PrintToChat(client, "%s%t", STORE_PREFIX, "No item attributes");
 				return;
-			}		
+			}
 
 			new playerModel = -1;
 			for (new j = 0; j < g_playerModelCount; j++)
 			{	
-				if (!StrEqual(g_currentHats[target], g_playerModels[j][EquipmentName]))
+				if (!StrEqual(g_currentEquipment[target][loadoutSlot], g_playerModels[j][EquipmentName]))
 					continue;
 
 				if (!StrEqual(modelPath, g_playerModels[j][PlayerModelPath], false))
@@ -712,7 +867,7 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 			if (playerModel == -1)
 			{
 				strcopy(g_playerModels[g_playerModelCount][PlayerModelPath], PLATFORM_MAX_PATH, modelPath);
-				strcopy(g_playerModels[g_playerModelCount][EquipmentName], STORE_MAX_NAME_LENGTH, g_currentHats[target]);
+				strcopy(g_playerModels[g_playerModelCount][EquipmentName], STORE_MAX_NAME_LENGTH, g_currentEquipment[target][loadoutSlot]);
 
 				for (new i = 0; i < 3; i++)
 				{
@@ -752,7 +907,7 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 						g_playerModels[playerModel][Position][2] -= 0.5;
 				}
 
-				Equip(target, loadoutSlot, g_currentHats[target]);
+				Equip(target, loadoutSlot, g_currentEquipment[target][loadoutSlot]);
 				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);				
 			}
 		}
