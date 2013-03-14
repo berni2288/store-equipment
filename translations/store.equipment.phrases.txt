@@ -1,0 +1,8 @@
+"Phrases"
+{
+	"Equipment wrong team"
+	{
+		"#format"			"{1:s}"
+		"en"				"You aren't on the right team for: {1}"
+	}
+}

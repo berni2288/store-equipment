@@ -19,7 +19,9 @@ enum Equipment
 	Float:EquipmentAngles[3],
 	String:EquipmentFlag[2],
 	String:EquipmentAttachment[32],
-	bool:EquipmentHasPhysics
+	bool:EquipmentHasPhysics,
+	String:EquipmentPhysicsModelPath[PLATFORM_MAX_PATH],
+	EquipmentTeam[10]
 }
 
 enum EquipmentPlayerModelSettings
@@ -87,8 +89,10 @@ public Plugin:myinfo =
 public OnPluginStart()
 {
 	LoadConfig();
+
 	LoadTranslations("common.phrases");
 	LoadTranslations("store.phrases");
+	LoadTranslations("store.equipment.phrases");
 	
 	g_loadoutSlotList = CreateArray(ByteCountToCells(32));
 	
@@ -259,6 +263,27 @@ public Store_OnReloadItems()
 	g_playerModelCount = 0;
 }
 
+json_object_get_string_default(Handle:hObj, const String:sKey[], String:sBuffer[], maxlength, String:sDefault[])
+{
+	new Handle:hElement = json_object_get(hObj, sKey);
+	if (hElement == INVALID_HANDLE)
+	{
+		strcopy(sBuffer, maxlength, sDefault);
+	}
+	else
+	{
+		if(json_is_string(hElement))
+		{
+			json_string_value(hElement, sBuffer, maxlength);
+		}
+		else
+		{
+			strcopy(sBuffer, maxlength, sDefault);
+		}
+		CloseHandle(hElement);
+	}
+}
+
 public LoadItem(const String:itemName[], const String:attrs[])
 {
 	strcopy(g_equipment[g_equipmentCount][EquipmentName], STORE_MAX_NAME_LENGTH, itemName);
@@ -279,6 +304,29 @@ public LoadItem(const String:itemName[], const String:attrs[])
 		Format(m_szRawPath, PLATFORM_MAX_PATH, "%s.phy", m_szRawPath);
 		g_equipment[g_equipmentCount][EquipmentHasPhysics] = FileExists(m_szRawPath);
 	}
+
+	if (!g_equipment[g_equipmentCount][EquipmentHasPhysics])
+	{
+		json_object_get_string_default(json, "physicsmodel", g_equipment[g_equipmentCount][EquipmentPhysicsModelPath], PLATFORM_MAX_PATH, "");
+	}
+
+	for (new i = 0; i < 10; i++)
+	{
+		g_equipment[g_equipmentCount][EquipmentTeam][i] = -1;
+	}
+	new Handle:team = json_object_get(json, "team");
+	if (team != INVALID_HANDLE)
+	{
+		new size = json_array_size(team);
+		if (size > 0)
+		{
+			for (new i = 0; i < size; i++)
+			{
+				g_equipment[g_equipmentCount][EquipmentTeam][i] = json_array_get_int(team, i);
+			}
+		}
+	}
+
 
 	new Handle:position = json_object_get(json, "position");
 
@@ -531,6 +579,18 @@ bool:Equip(client, loadoutSlot, const String:name[])
 		return false;
 	}
 
+	for (new i = 0; i < 10; i++)
+	{
+		if (g_equipment[equipment][EquipmentTeam] > 1) // assume 0 is unassigned, 1 is spec
+		{
+			if (GetClientTeam(client) != g_equipment[equipment][EquipmentTeam])
+			{
+				PrintToChat(client, "%s%t", STORE_PREFIX, "Equipment wrong team", name);
+				return true;
+			}
+		}
+	}
+
 	new ent = CreateEntityByName("prop_dynamic_override");
 	DispatchKeyValue(ent, "model", g_equipment[equipment][EquipmentModelPath]);
 	// DispatchKeyValue(ent, "spawnflags", "256"); // don't output on +use flag
@@ -559,6 +619,11 @@ bool:Equip(client, loadoutSlot, const String:name[])
 	return true;
 }
 
+public Action:DestroyEquipment(Handle:timer, any:ent)
+{
+	AcceptEntityInput(ent, "Kill");
+}
+
 bool:Unequip(client, loadoutSlot)
 {
 	new oldequip = g_iEquipment[client][loadoutSlot];
@@ -570,12 +635,19 @@ bool:Unequip(client, loadoutSlot)
 
 		switch(g_player_death_equipment_effect)
 		{
-			case 1:
+			case 1: // stay on ragdoll
 			{
 				new ragdoll = GetEntPropEnt(client, Prop_Send, "m_hRagdoll");
 				if (ragdoll > 0 && IsValidEdict(ragdoll))
 				{
-					new equipment = GetEquipmentIndexFromName(g_currentEquipment[client][loadoutSlot]); // assume equip exists ? prolly bad assumption
+					AcceptEntityInput(oldequip, "ClearParent");
+					
+					new equipment = GetEquipmentIndexFromName(g_currentEquipment[client][loadoutSlot]);
+					if (equipment < 0)
+					{
+						AcceptEntityInput(oldequip, "Kill");
+						return true;
+					}
 
 					SetEntityVectors(ragdoll, oldequip, equipment);
 	
@@ -588,7 +660,7 @@ bool:Unequip(client, loadoutSlot)
 					//LogMessage("OK %i %i", equipment, oldequip);
 				}
 			}
-			case 2:
+			case 2: // physics
 			{
 				AcceptEntityInput(oldequip, "ClearParent");
 
@@ -604,7 +676,12 @@ bool:Unequip(client, loadoutSlot)
 				velocity[2] *= 1.2;
 				
 				new ent;
-				new equipment = GetEquipmentIndexFromName(g_currentEquipment[client][loadoutSlot]); // assume equip exists ? prolly bad assumption
+				new equipment = GetEquipmentIndexFromName(g_currentEquipment[client][loadoutSlot]);
+				if (equipment < 0)
+				{
+					AcceptEntityInput(oldequip, "Kill");
+					return true;
+				}
 				if (g_equipment[equipment][EquipmentHasPhysics])
 				{
 					ent = oldequip;
@@ -612,7 +689,19 @@ bool:Unequip(client, loadoutSlot)
 				else
 				{
 					ent = CreateEntityByName("prop_physics_multiplayer");
-					DispatchKeyValue(ent, "model", g_default_physics_model);
+					if (ent < 0 || !IsValidEdict(ent))
+					{
+						AcceptEntityInput(oldequip, "Kill");
+						return true;
+					}
+					if (strlen(g_equipment[g_equipmentCount][EquipmentPhysicsModelPath]) > 0)
+					{
+						DispatchKeyValue(ent, "model", g_equipment[g_equipmentCount][EquipmentPhysicsModelPath]);
+					}
+					else 
+					{
+						DispatchKeyValue(ent, "model", g_default_physics_model);
+					}
 					DispatchKeyValue(ent, "spawnflags", "6");
 					DispatchKeyValue(ent, "physicsmode", "2");
 					DispatchKeyValue(ent, "rendermode", "10");
@@ -630,27 +719,26 @@ bool:Unequip(client, loadoutSlot)
 				}
 
 				SetEntPropVector(ent, Prop_Data, "m_vecVelocity", velocity); // is this necessary ?
+
+				CreateTimer(10.0, DestroyEquipment, ent);
 			}
-			case 3:
+			case 3: // dissolver
 			{
 				AcceptEntityInput(oldequip, "ClearParent");
 				new dissolver = CreateEntityByName("env_entity_dissolver");
-
-				if (dissolver > 0)
-				{
-					DispatchKeyValue(dissolver, "dissolvetype", g_player_death_dissolve_type);
-					DispatchKeyValue(dissolver, "magnitude", "1");
-					DispatchKeyValue(dissolver, "target", "!activator");
-
-					AcceptEntityInput(dissolver, "Dissolve", oldequip);
-					AcceptEntityInput(dissolver, "Kill");
-				}
-				else 
+				if (dissolver < 0 || !IsValidEdict(dissolver))
 				{
 					AcceptEntityInput(oldequip, "Kill");
+					return true;
 				}
+				DispatchKeyValue(dissolver, "dissolvetype", g_player_death_dissolve_type);
+				DispatchKeyValue(dissolver, "magnitude", "1");
+				DispatchKeyValue(dissolver, "target", "!activator");
+
+				AcceptEntityInput(dissolver, "Dissolve", oldequip);
+				AcceptEntityInput(dissolver, "Kill");
 			}
-			default:
+			default: // 0/anything else = kill
 			{
 				AcceptEntityInput(oldequip, "Kill");
 			}
