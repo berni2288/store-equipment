@@ -56,6 +56,9 @@ new String:g_default_physics_model[PLATFORM_MAX_PATH];
 new g_player_death_equipment_effect;
 new String:g_player_death_dissolve_type[2];
 
+new Handle:Timers_Destroy[64];
+new g_current_timer;
+
 /**
  * Called before plugin is loaded.
  * 
@@ -101,6 +104,7 @@ public OnPluginStart()
 	
 	HookEvent("player_spawn", Event_PlayerSpawn);
 	HookEvent("player_death", Event_PlayerDeath);
+	HookEvent("round_end", Event_RoundEnd);
 	
 	new Handle:hGameConf = LoadGameConfigFile("store-equipment.gamedata");
 	StartPrepSDKCall(SDKCall_Entity);
@@ -195,9 +199,31 @@ public Action:Event_PlayerSpawn(Handle:event, const String:name[], bool:dontBroa
 
 public Action:Event_PlayerDeath(Handle:event, const String:name[], bool:dontBroadcast)
 {
-	UnequipAll(GetClientOfUserId(GetEventInt(event, "userid")));
+	UnequipAll(GetClientOfUserId(GetEventInt(event, "userid")), false);
 	return Plugin_Continue;
 }
+
+public Action:Event_RoundEnd(Handle:event, const String:name[], bool:dontBroadcast)
+{
+	for(new i = 0; i < sizeof(Timers_Destroy); i++)
+	{
+		if (Timers_Destroy[i] != INVALID_HANDLE)
+		{
+			KillTimer(Timers_Destroy[i]);
+			Timers_Destroy[i] = INVALID_HANDLE;
+		}
+	}
+	g_current_timer = 0;
+	
+	return Plugin_Continue;
+}
+
+/*public OnEntityCreated(entity, const String:classname[])
+{
+	new String:othername[32];
+	GetEdictClassname(entity, othername, sizeof(othername));
+	LogMessage("OnEntityCreated: %s, %s", classname, othername);
+}*/
 
 /**
  * Called after a player has become a zombie.
@@ -579,15 +605,12 @@ bool:Equip(client, loadoutSlot, const String:name[])
 		return false;
 	}
 
-	for (new i = 0; i < 10; i++)
+	if (g_equipment[equipment][EquipmentTeam] > 1) // assume 0 is unassigned, 1 is spec
 	{
-		if (g_equipment[equipment][EquipmentTeam] > 1) // assume 0 is unassigned, 1 is spec
+		if (GetClientTeam(client) != g_equipment[equipment][EquipmentTeam])
 		{
-			if (GetClientTeam(client) != g_equipment[equipment][EquipmentTeam])
-			{
-				PrintToChat(client, "%s%t", STORE_PREFIX, "Equipment wrong team", name);
-				return true;
-			}
+			PrintToChat(client, "%s%t", STORE_PREFIX, "Equipment wrong team", g_equipment[equipment][EquipmentName]);
+			return false;
 		}
 	}
 
@@ -621,10 +644,13 @@ bool:Equip(client, loadoutSlot, const String:name[])
 
 public Action:DestroyEquipment(Handle:timer, any:ent)
 {
-	AcceptEntityInput(ent, "Kill");
+	if (IsValidEdict(ent))
+	{
+		AcceptEntityInput(ent, "Kill");
+	}
 }
 
-bool:Unequip(client, loadoutSlot)
+bool:Unequip(client, loadoutSlot, bool:destroy=true)
 {
 	new oldequip = g_iEquipment[client][loadoutSlot];
 	g_iEquipment[client][loadoutSlot] = 0;
@@ -632,6 +658,12 @@ bool:Unequip(client, loadoutSlot)
 	if (oldequip != 0 && IsValidEdict(oldequip))
 	{
 		SDKUnhook(oldequip, SDKHook_SetTransmit, ShouldHide);
+
+		if(destroy)
+		{
+			AcceptEntityInput(oldequip, "Kill");
+			return true;
+		}
 
 		switch(g_player_death_equipment_effect)
 		{
@@ -720,7 +752,11 @@ bool:Unequip(client, loadoutSlot)
 
 				SetEntPropVector(ent, Prop_Data, "m_vecVelocity", velocity); // is this necessary ?
 
-				CreateTimer(10.0, DestroyEquipment, ent);
+				Timers_Destroy[g_current_timer++] = CreateTimer(10.0, DestroyEquipment, ent);
+				if (g_current_timer >= sizeof(Timers_Destroy))
+				{
+					g_current_timer = 0;
+				}
 			}
 			case 3: // dissolver
 			{
@@ -747,10 +783,10 @@ bool:Unequip(client, loadoutSlot)
 	return true;
 }
 
-UnequipAll(client)
+UnequipAll(client, bool:destroy=true)
 {
 	for (new index = 0, size = GetArraySize(g_loadoutSlotList); index < size; index++)
-		Unequip(client, index);
+		Unequip(client, index, destroy);
 }
 
 public Action:ShouldHide(ent, client)
