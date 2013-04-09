@@ -56,7 +56,7 @@ new String:g_default_physics_model[PLATFORM_MAX_PATH];
 new g_player_death_equipment_effect;
 new String:g_player_death_dissolve_type[2];
 
-new Handle:Timers_Destroy[64];
+new Handle:Timers_Destroy[MAXPLAYERS*2];
 new g_current_timer;
 
 /**
@@ -609,7 +609,7 @@ bool:Equip(client, loadoutSlot, const String:name[])
 	{
 		if (GetClientTeam(client) != g_equipment[equipment][EquipmentTeam])
 		{
-			PrintToChat(client, "%s%t", STORE_PREFIX, "Equipment wrong team", g_equipment[equipment][EquipmentName]);
+			PrintToChat(client, "%s%t", STORE_PREFIX, "Equipment wrong team", name);
 			return false;
 		}
 	}
@@ -904,16 +904,58 @@ public Editor_LoadoutSlotSelectHandle(Handle:menu, MenuAction:action, client, sl
 	}
 }
 
-Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, Float:amount = 0.5)
+Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot)
+{
+	new Handle:menu = CreateMenu(Editor_ActionChooseTypeHandle);
+	SetMenuTitle(menu, "Select type:");
+
+	decl String:value[96];
+	Format(value, sizeof(value), "position,%d,%d", target, loadoutSlot);
+	AddMenuItem(menu, value, "Position");
+
+	Format(value, sizeof(value), "angle,%d,%d", target, loadoutSlot);
+	AddMenuItem(menu, value, "Angle");
+
+	DisplayMenu(menu, client, 0);
+}
+
+public Editor_ActionChooseTypeHandle(Handle:menu, MenuAction:action, client, slot)
+{
+	if (action == MenuAction_Select)
+	{
+		new String:value[128];
+		if (GetMenuItem(menu, slot, value, sizeof(value)))
+		{
+			new String:values[3][32];
+			ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
+			if (StrEqual(values[1], "angle"))
+			{
+				Editor_OpenAngleMenu(client, StringToInt(values[1]), StringToInt(values[2]));
+			}
+			else
+			{
+				Editor_OpenPositionMenu(client, StringToInt(values[1]), StringToInt(values[2]));
+			}
+		}
+	}
+	else if (action == MenuAction_End)
+	{
+		CloseHandle(menu);
+	}
+}
+
+Editor_OpenAngleMenu(client, target, loadoutSlot, Float:amount = 10.0)
 {
 	new Handle:menu = CreateMenu(Editor_ActionSelectHandle);
-	SetMenuTitle(menu, "Select loadout slot:");
+	SetMenuTitle(menu, "Adjust Angle:");
+
+	new String:editor_angles[3][] = { "Pitch", "Yaw", "Roll" };
 
 	for (new bool:add = true; add >= false; add--)
 	{
-		for (new axis = 'x'; axis <= 'z'; axis++)
+		for (new i = 0; i < 3; i++)
 		{
-			Editor_AddMenuItem(menu, target, "position", loadoutSlot, axis, add, amount);
+			Editor_AddMenuItem(menu, target, "angle", loadoutSlot, editor_angles[i], add, amount);
 		}
 	}
 
@@ -921,25 +963,48 @@ Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, Float:amount = 0.5)
 	DisplayMenu(menu, client, 0);
 }
 
-Editor_AddMenuItem(Handle:menu, target, const String:actionType[], loadoutSlot, axis = 0, bool:add = false, Float:amount = 0.0)
+Editor_OpenPositionMenu(client, target, loadoutSlot, Float:amount = 0.5)
+{
+	new Handle:menu = CreateMenu(Editor_ActionSelectHandle);
+	SetMenuTitle(menu, "Adjust Position:");
+
+	new String:editor_axis[3][] = { "X", "Y", "Z" };
+
+	for (new bool:add = true; add >= false; add--)
+	{
+		for (new i = 0; i < 3; i++)
+		{
+			Editor_AddMenuItem(menu, target, "position", loadoutSlot, editor_axis[i], add, amount);
+		}
+	}
+
+	Editor_AddMenuItem(menu, target, "save", loadoutSlot);
+	DisplayMenu(menu, client, 0);
+}
+
+Editor_AddMenuItem(Handle:menu, target, const String:actionType[], loadoutSlot, const String:type[] = "", bool:add = false, Float:amount = 0.0)
 {
 	decl String:value[128];
-	Format(value, sizeof(value), "%s,%d,%d,%c,%b", actionType, target, loadoutSlot, axis, add);
+	Format(value, sizeof(value), "%s,%d,%d,%c,%b,%d", actionType, target, loadoutSlot, type, add, amount);
 
 	decl String:text[32];
 
+	Format(text, sizeof(text), "%s ", type);
+
+	if (add)
+		Format(text, sizeof(text), "%s+", text);
+	else
+		Format(text, sizeof(text), "%s-", text);
+
 	if (StrEqual(actionType, "position"))
 	{
-		Format(text, sizeof(text), "%c ", CharToUpper(axis));
-
-		if (add)
-			Format(text, sizeof(text), "%s+", text);
-		else
-			Format(text, sizeof(text), "%s-", text);
-
 		Format(text, sizeof(text), "%s %.1f", text, amount);
 	}
-	else
+	else if (StrEqual(actionType, "angle"))
+	{
+		Format(text, sizeof(text), "%s %d", text, amount);
+	}
+	else // save
 	{
 		Format(text, sizeof(text), "Save");
 	}
@@ -954,18 +1019,15 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 		new String:value[128];
 		if (GetMenuItem(menu, slot, value, sizeof(value)))
 		{
-			new String:values[5][32];
+			new String:values[6][32];
 			ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
 
 			new target = StringToInt(values[1]);
 			new loadoutSlot = StringToInt(values[2]);
 
-			//new entity = g_iEquipment[target][loadoutSlot];
-
 			decl String:modelPath[PLATFORM_MAX_PATH];
 			GetClientModel(target, modelPath, sizeof(modelPath));
 
-			new axis = values[3][0];
 			new bool:add = bool:StringToInt(values[4]);
 
 			new equipment = GetEquipmentIndexFromName(g_currentEquipment[target][loadoutSlot]);
@@ -1006,34 +1068,59 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 			if (StrEqual(values[0], "save"))
 			{
 				Editor_SavePlayerModelAttributes(client, equipment);
+				return;
+			}
+			else if (StrEqual(values[0], "position"))
+			{
+				if (StrEqual(values[3], "X"))
+				{
+					if (add)
+						g_playerModels[playerModel][Position][0] += StringToFloat(values[5]);
+					else
+						g_playerModels[playerModel][Position][0] -= StringToFloat(values[5]);
+				}
+				else if (StrEqual(values[3], "Y"))
+				{
+					if (add)
+						g_playerModels[playerModel][Position][1] += StringToFloat(values[5]);
+					else
+						g_playerModels[playerModel][Position][1] -= StringToFloat(values[5]);
+				} 
+				else if (StrEqual(values[3], "Z"))
+				{
+					if (add)
+						g_playerModels[playerModel][Position][2] += StringToFloat(values[5]);
+					else
+						g_playerModels[playerModel][Position][2] -= StringToFloat(values[5]);
+				}
 			}
 			else
 			{
-				if (axis == 'x')
+				if (StrEqual(values[3], "Pitch"))
 				{
 					if (add)
-						g_playerModels[playerModel][Position][0] += 0.5;
+						g_playerModels[playerModel][Angles][0] += StringToFloat(values[5]);
 					else
-						g_playerModels[playerModel][Position][0] -= 0.5;
+						g_playerModels[playerModel][Angles][0] -= StringToFloat(values[5]);
 				}
-				else if (axis == 'y')
+				else if (StrEqual(values[3], "Yaw"))
 				{
 					if (add)
-						g_playerModels[playerModel][Position][1] += 0.5;
+						g_playerModels[playerModel][Angles][1] += StringToFloat(values[5]);
 					else
-						g_playerModels[playerModel][Position][1] -= 0.5;
+						g_playerModels[playerModel][Angles][1] -= StringToFloat(values[5]);
 				} 
-				else if (axis == 'z')
+				else if (StrEqual(values[3], "Roll"))
 				{
 					if (add)
-						g_playerModels[playerModel][Position][2] += 0.5;
+						g_playerModels[playerModel][Angles][2] += StringToFloat(values[5]);
 					else
-						g_playerModels[playerModel][Position][2] -= 0.5;
+						g_playerModels[playerModel][Angles][2] -= StringToFloat(values[5]);
 				}
-
-				Equip(target, loadoutSlot, g_currentEquipment[target][loadoutSlot]);
-				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);				
 			}
+
+			Equip(target, loadoutSlot, g_currentEquipment[target][loadoutSlot]);
+			Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);
 		}
 	}
 	else if (action == MenuAction_End)
