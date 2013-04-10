@@ -56,9 +56,6 @@ new String:g_default_physics_model[PLATFORM_MAX_PATH];
 new g_player_death_equipment_effect;
 new String:g_player_death_dissolve_type[2];
 
-new Handle:Timers_Destroy[MAXPLAYERS*2];
-new g_current_timer;
-
 /**
  * Called before plugin is loaded.
  * 
@@ -105,7 +102,6 @@ public OnPluginStart()
 	HookEvent("player_spawn", Event_PlayerSpawn);
 	HookEvent("player_hurt", Event_PlayerHurt); // sometimes player_death events dont fire, but the hurt does with remaining health = 0
 	HookEvent("player_death", Event_PlayerDeath);
-	HookEvent("round_end", Event_RoundEnd);
 	
 	new Handle:hGameConf = LoadGameConfigFile("store-equipment.gamedata");
 	StartPrepSDKCall(SDKCall_Entity);
@@ -210,21 +206,6 @@ public Action:Event_PlayerHurt(Handle:event, const String:name[], bool:dontBroad
 public Action:Event_PlayerDeath(Handle:event, const String:name[], bool:dontBroadcast)
 {
 	UnequipAll(GetClientOfUserId(GetEventInt(event, "userid")), false);
-	return Plugin_Continue;
-}
-
-public Action:Event_RoundEnd(Handle:event, const String:name[], bool:dontBroadcast)
-{
-	for(new i = 0; i < sizeof(Timers_Destroy); i++)
-	{
-		if (Timers_Destroy[i] != INVALID_HANDLE)
-		{
-			KillTimer(Timers_Destroy[i]);
-			Timers_Destroy[i] = INVALID_HANDLE;
-		}
-	}
-	g_current_timer = 0;
-	
 	return Plugin_Continue;
 }
 
@@ -652,14 +633,6 @@ bool:Equip(client, loadoutSlot, const String:name[])
 	return true;
 }
 
-public Action:DestroyEquipment(Handle:timer, any:ent)
-{
-	if (IsValidEdict(ent))
-	{
-		AcceptEntityInput(ent, "Kill");
-	}
-}
-
 bool:Unequip(client, loadoutSlot, bool:destroy=true)
 {
 	new oldequip = g_iEquipment[client][loadoutSlot];
@@ -746,7 +719,7 @@ bool:Unequip(client, loadoutSlot, bool:destroy=true)
 					}
 					DispatchKeyValue(ent, "spawnflags", "6");
 					DispatchKeyValue(ent, "physicsmode", "2");
-					DispatchKeyValue(ent, "rendermode", "10");
+					DispatchKeyValue(ent, "rendermode", "10"); // invisible
 					DispatchKeyValue(ent, "renderamt", "0");
 					DispatchSpawn(ent);
 					ActivateEntity(ent);
@@ -762,11 +735,12 @@ bool:Unequip(client, loadoutSlot, bool:destroy=true)
 
 				SetEntPropVector(ent, Prop_Data, "m_vecVelocity", velocity); // is this necessary ?
 
-				Timers_Destroy[g_current_timer++] = CreateTimer(10.0, DestroyEquipment, ent);
-				if (g_current_timer >= sizeof(Timers_Destroy))
-				{
-					g_current_timer = 0;
-				}
+				// kill the physics entity (and equipment as it is attached) in 10 seconds
+				new String:addoutput[64];
+				Format(addoutput, sizeof(addoutput), "OnUser1 !self:kill::%f:1", 10.0);
+				SetVariantString(addoutput);
+				AcceptEntityInput(ent, "AddOutput");
+				AcceptEntityInput(ent, "FireUser1");
 			}
 			case 3: // dissolver
 			{
@@ -938,7 +912,7 @@ public Editor_ActionChooseTypeHandle(Handle:menu, MenuAction:action, client, slo
 		{
 			new String:values[3][32];
 			ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
-			if (StrEqual(values[1], "angle"))
+			if (StrEqual(values[0], "angle"))
 			{
 				Editor_OpenAngleMenu(client, StringToInt(values[1]), StringToInt(values[2]));
 			}
@@ -1080,57 +1054,46 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 				Editor_SavePlayerModelAttributes(client, equipment);
 				return;
 			}
-			else if (StrEqual(values[0], "position"))
+
+			new Float:amount = StringToFloat(values[5]);
+			if (!add)
+				amount *= -1;
+
+			PrintToChatAll("%s %s %f", values[0], values[3], amount);
+
+			if (StrEqual(values[0], "position"))
 			{
 				if (StrEqual(values[3], "X"))
 				{
-					if (add)
-						g_playerModels[playerModel][Position][0] += StringToFloat(values[5]);
-					else
-						g_playerModels[playerModel][Position][0] -= StringToFloat(values[5]);
+					g_playerModels[playerModel][Position][0] += amount;
 				}
 				else if (StrEqual(values[3], "Y"))
 				{
-					if (add)
-						g_playerModels[playerModel][Position][1] += StringToFloat(values[5]);
-					else
-						g_playerModels[playerModel][Position][1] -= StringToFloat(values[5]);
+					g_playerModels[playerModel][Position][1] += amount;
 				} 
 				else if (StrEqual(values[3], "Z"))
 				{
-					if (add)
-						g_playerModels[playerModel][Position][2] += StringToFloat(values[5]);
-					else
-						g_playerModels[playerModel][Position][2] -= StringToFloat(values[5]);
+					g_playerModels[playerModel][Position][2] += amount;
 				}
 			}
 			else
 			{
 				if (StrEqual(values[3], "Pitch"))
 				{
-					if (add)
-						g_playerModels[playerModel][Angles][0] += StringToFloat(values[5]);
-					else
-						g_playerModels[playerModel][Angles][0] -= StringToFloat(values[5]);
+					g_playerModels[playerModel][Angles][0] += amount;
 				}
 				else if (StrEqual(values[3], "Yaw"))
 				{
-					if (add)
-						g_playerModels[playerModel][Angles][1] += StringToFloat(values[5]);
-					else
-						g_playerModels[playerModel][Angles][1] -= StringToFloat(values[5]);
+					g_playerModels[playerModel][Angles][1] += amount;
 				} 
 				else if (StrEqual(values[3], "Roll"))
 				{
-					if (add)
-						g_playerModels[playerModel][Angles][2] += StringToFloat(values[5]);
-					else
-						g_playerModels[playerModel][Angles][2] -= StringToFloat(values[5]);
+					g_playerModels[playerModel][Angles][2] += amount;
 				}
 			}
 
 			Equip(target, loadoutSlot, g_currentEquipment[target][loadoutSlot]);
-			Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);
+			// Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);
 		}
 	}
 	else if (action == MenuAction_End)
