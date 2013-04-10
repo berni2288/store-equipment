@@ -103,6 +103,7 @@ public OnPluginStart()
 	g_toggleEffects = LibraryExists("ToggleEffects");
 	
 	HookEvent("player_spawn", Event_PlayerSpawn);
+	HookEvent("player_hurt", Event_PlayerHurt); // sometimes player_death events dont fire, but the hurt does with remaining health = 0
 	HookEvent("player_death", Event_PlayerDeath);
 	HookEvent("round_end", Event_RoundEnd);
 	
@@ -194,6 +195,15 @@ public Action:Event_PlayerSpawn(Handle:event, const String:name[], bool:dontBroa
 	else
 		UnequipAll(client);
 	
+	return Plugin_Continue;
+}
+
+public Action:Event_PlayerHurt(Handle:event, const String:name[], bool:dontBroadcast)
+{
+	if (GetEventInt(event, "health") <= 0)
+	{
+		UnequipAll(GetClientOfUserId(GetEventInt(event, "userid")), false);
+	}
 	return Plugin_Continue;
 }
 
