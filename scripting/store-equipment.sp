@@ -17,7 +17,6 @@ enum Equipment
 	String:EquipmentModelPath[PLATFORM_MAX_PATH],
 	Float:EquipmentPosition[3],
 	Float:EquipmentAngles[3],
-	String:EquipmentFlag[2],
 	String:EquipmentAttachment[32],
 	bool:EquipmentHasPhysics,
 	String:EquipmentPhysicsModelPath[PLATFORM_MAX_PATH],
@@ -429,6 +428,9 @@ public OnGetPlayerEquipment(ids[], count, any:serial)
 	{
 		decl String:itemName[STORE_MAX_NAME_LENGTH];
 		Store_GetItemName(ids[index], itemName, sizeof(itemName));
+
+		decl String:displayName[STORE_MAX_DISPLAY_NAME_LENGTH];
+		Store_GetItemDisplayName(ids[index], displayName, sizeof(displayName));
 		
 		decl String:loadoutSlot[STORE_MAX_LOADOUTSLOT_LENGTH];
 		Store_GetItemLoadoutSlot(ids[index], loadoutSlot, sizeof(loadoutSlot));
@@ -441,7 +443,7 @@ public OnGetPlayerEquipment(ids[], count, any:serial)
 		Unequip(client, loadoutSlotIndex);
 		
 		if (!g_zombieReloaded || (g_zombieReloaded && ZR_IsClientHuman(client)))
-			Equip(client, loadoutSlotIndex, itemName);
+			Equip(client, loadoutSlotIndex, itemName, displayName);
 	}
 }
 
@@ -488,11 +490,11 @@ public Store_ItemUseAction:OnEquip(client, itemId, bool:equipped)
 	}
 	else
 	{
-		if (!Equip(client, loadoutSlotIndex, name))
-			return Store_DoNothing;
-		
 		decl String:displayName[STORE_MAX_DISPLAY_NAME_LENGTH];
 		Store_GetItemDisplayName(itemId, displayName, sizeof(displayName));
+
+		if (!Equip(client, loadoutSlotIndex, name, displayName))
+			return Store_DoNothing;
 		
 		PrintToChat(client, "%s%t", STORE_PREFIX, "Equipped item", displayName);
 		return Store_EquipItem;
@@ -579,7 +581,7 @@ GetEquipmentIndexFromName(const String:name[])
 	return equipment;
 }
 
-bool:Equip(client, loadoutSlot, const String:name[])
+bool:Equip(client, loadoutSlot, const String:name[], const String:displayName[]="")
 {
 	Unequip(client, loadoutSlot);
 
@@ -600,7 +602,7 @@ bool:Equip(client, loadoutSlot, const String:name[])
 	{
 		if (GetClientTeam(client) != g_equipment[equipment][EquipmentTeam])
 		{
-			PrintToChat(client, "%s%t", STORE_PREFIX, "Equipment wrong team", name);
+			PrintToChat(client, "%s%t", STORE_PREFIX, "Equipment wrong team", strlen(displayName) == 0 ? name : displayName);
 			return false;
 		}
 	}
