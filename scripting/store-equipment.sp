@@ -18,9 +18,9 @@ enum Equipment
 	Float:EquipmentPosition[3],
 	Float:EquipmentAngles[3],
 	String:EquipmentAttachment[32],
-	bool:EquipmentHasPhysics,
 	String:EquipmentPhysicsModelPath[PLATFORM_MAX_PATH],
-	EquipmentTeam[10]
+	EquipmentTeam[10],
+	Float:EquipmentScale
 }
 
 enum EquipmentPlayerModelSettings
@@ -309,22 +309,7 @@ public LoadItem(const String:itemName[], const String:attrs[])
 	new Handle:json = json_load(attrs);
 	json_object_get_string(json, "model", g_equipment[g_equipmentCount][EquipmentModelPath], PLATFORM_MAX_PATH);
 	json_object_get_string(json, "attachment", g_equipment[g_equipmentCount][EquipmentAttachment], 32);
-
-	g_equipment[g_equipmentCount][EquipmentHasPhysics] = false;
-	decl String:m_szRawPath[PLATFORM_MAX_PATH];
-	strcopy(m_szRawPath, sizeof(m_szRawPath), g_equipment[g_equipmentCount][EquipmentModelPath]);
-	new m_iDot = FindCharInString(m_szRawPath, '.', true);
-	if(m_iDot > 0)
-	{
-		m_szRawPath[m_iDot] = 0;
-		Format(m_szRawPath, PLATFORM_MAX_PATH, "%s.phy", m_szRawPath);
-		g_equipment[g_equipmentCount][EquipmentHasPhysics] = FileExists(m_szRawPath);
-	}
-
-	if (!g_equipment[g_equipmentCount][EquipmentHasPhysics])
-	{
-		json_object_get_string_default(json, "physicsmodel", g_equipment[g_equipmentCount][EquipmentPhysicsModelPath], PLATFORM_MAX_PATH, "");
-	}
+	json_object_get_string_default(json, "physicsmodel", g_equipment[g_equipmentCount][EquipmentPhysicsModelPath], PLATFORM_MAX_PATH, "");
 
 	for (new i = 0; i < 10; i++)
 	{
@@ -341,8 +326,13 @@ public LoadItem(const String:itemName[], const String:attrs[])
 				g_equipment[g_equipmentCount][EquipmentTeam][i] = json_array_get_int(team, i);
 			}
 		}
+		CloseHandle(team);
 	}
 
+
+	g_equipment[g_equipmentCount][EquipmentScale] = json_object_get_float(json, "scale");
+	if (g_equipment[g_equipmentCount][EquipmentScale] <= 0)
+		g_equipment[g_equipmentCount][EquipmentScale] = 1.0;
 
 	new Handle:position = json_object_get(json, "position");
 
@@ -612,6 +602,7 @@ bool:Equip(client, loadoutSlot, const String:name[], const String:displayName[]=
 	// DispatchKeyValue(ent, "spawnflags", "256"); // don't output on +use flag
 	DispatchKeyValue(ent, "solid", "0");
 	//SetEntPropEnt(ent, Prop_Send, "m_hOwnerEntity", client); // not needed ?
+	SetEntPropFloat(ent, Prop_Data, "m_flModelScale", g_equipment[equipment][EquipmentScale]);
 	
 	DispatchSpawn(ent);
 
@@ -692,48 +683,40 @@ bool:Unequip(client, loadoutSlot, bool:destroy=true)
 				velocity[1] *= 1.2;
 				velocity[2] *= 1.2;
 				
-				new ent;
 				new equipment = GetEquipmentIndexFromName(g_currentEquipment[client][loadoutSlot]);
 				if (equipment < 0)
 				{
 					AcceptEntityInput(oldequip, "Kill");
 					return true;
 				}
-				if (g_equipment[equipment][EquipmentHasPhysics])
+				new ent = CreateEntityByName("prop_physics_multiplayer");
+				if (ent < 0 || !IsValidEdict(ent))
 				{
-					ent = oldequip;
+					AcceptEntityInput(oldequip, "Kill");
+					return true;
 				}
-				else
+				if (strlen(g_equipment[g_equipmentCount][EquipmentPhysicsModelPath]) > 0)
 				{
-					ent = CreateEntityByName("prop_physics_multiplayer");
-					if (ent < 0 || !IsValidEdict(ent))
-					{
-						AcceptEntityInput(oldequip, "Kill");
-						return true;
-					}
-					if (strlen(g_equipment[g_equipmentCount][EquipmentPhysicsModelPath]) > 0)
-					{
-						DispatchKeyValue(ent, "model", g_equipment[g_equipmentCount][EquipmentPhysicsModelPath]);
-					}
-					else 
-					{
-						DispatchKeyValue(ent, "model", g_default_physics_model);
-					}
-					DispatchKeyValue(ent, "spawnflags", "6");
-					DispatchKeyValue(ent, "physicsmode", "2");
-					DispatchKeyValue(ent, "rendermode", "10"); // invisible
-					DispatchKeyValue(ent, "renderamt", "0");
-					DispatchSpawn(ent);
-					ActivateEntity(ent);
-
-					new Float:origin[3];
-					GetEntPropVector(oldequip, Prop_Send, "m_vecOrigin", origin);
-
-					TeleportEntity(ent, origin, NULL_VECTOR, velocity);
-
-					SetVariantString("!activator");
-					AcceptEntityInput(oldequip, "SetParent", ent, oldequip);
+					DispatchKeyValue(ent, "model", g_equipment[g_equipmentCount][EquipmentPhysicsModelPath]);
 				}
+				else 
+				{
+					DispatchKeyValue(ent, "model", g_default_physics_model);
+				}
+				DispatchKeyValue(ent, "spawnflags", "6");
+				DispatchKeyValue(ent, "physicsmode", "2");
+				DispatchKeyValue(ent, "rendermode", "10"); // invisible
+				DispatchKeyValue(ent, "renderamt", "0");
+				DispatchSpawn(ent);
+				ActivateEntity(ent);
+
+				new Float:origin[3];
+				GetEntPropVector(oldequip, Prop_Send, "m_vecOrigin", origin);
+
+				TeleportEntity(ent, origin, NULL_VECTOR, velocity);
+
+				SetVariantString("!activator");
+				AcceptEntityInput(oldequip, "SetParent", ent, oldequip);
 
 				SetEntPropVector(ent, Prop_Data, "m_vecVelocity", velocity); // is this necessary ?
 
@@ -777,7 +760,7 @@ UnequipAll(client, bool:destroy=true)
 
 public Action:ShouldHide(ent, client)
 {
-	if (g_toggleEffects)
+	/*if (g_toggleEffects)
 		if (!ShowClientEffects(client))
 			return Plugin_Handled;
 			
@@ -794,7 +777,7 @@ public Action:ShouldHide(ent, client)
 			if (ent == g_iEquipment[GetEntPropEnt(client, Prop_Send, "m_hObserverTarget")][index])
 				return Plugin_Handled;
 		}
-	}
+	}*/
 	
 	return Plugin_Continue;
 }

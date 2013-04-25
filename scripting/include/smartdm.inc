@@ -170,6 +170,8 @@ stock Downloader_AddFileToDownloadsTable(const String:filename[])
 		{
 			if(FileExists(m_szMaterials[i]))
 				m_iNumFiles += Downloader_AddFileToDownloadsTable(m_szMaterials[i])+1;
+			else
+				PrintToServer("Unable to find: %s", m_szMaterials[i]);
 		}
 	} else if(strcmp(m_szExt, ".vmt") == 0)
 	{
