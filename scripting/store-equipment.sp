@@ -148,6 +148,15 @@ public OnMapStart()
 			Downloader_AddFileToDownloadsTable(g_equipment[item][EquipmentModelPath]);
 		}
 	}
+	AddFileToDownloadsTable("materials/models/gmod_tower/afro.vmt");
+	AddFileToDownloadsTable("materials/models/player/items/moustache/moustache.vmt");
+	AddFileToDownloadsTable("materials/models/player/items/moustache/moustache.vtf");
+	AddFileToDownloadsTable("materials/models/player/items/all_class/bowtie.vmt");
+	AddFileToDownloadsTable("materials/models/player/items/all_class/bowtie.vtf");
+	AddFileToDownloadsTable("materials/models/player/items/all_class/bowtie_blue.vmt");
+	AddFileToDownloadsTable("materials/models/player/items/all_class/bowtie_blue.vtf");
+	AddFileToDownloadsTable("materials/models/lightwarps/weapon_lightwarp.vtf");
+	AddFileToDownloadsTable("materials/models/player/pyro/pyro_lightwarp.vtf");
 }
 
 /** 
@@ -331,8 +340,6 @@ public LoadItem(const String:itemName[], const String:attrs[])
 
 
 	g_equipment[g_equipmentCount][EquipmentScale] = json_object_get_float(json, "scale");
-	if (g_equipment[g_equipmentCount][EquipmentScale] <= 0)
-		g_equipment[g_equipmentCount][EquipmentScale] = 1.0;
 
 	new Handle:position = json_object_get(json, "position");
 
@@ -602,7 +609,10 @@ bool:Equip(client, loadoutSlot, const String:name[], const String:displayName[]=
 	// DispatchKeyValue(ent, "spawnflags", "256"); // don't output on +use flag
 	DispatchKeyValue(ent, "solid", "0");
 	//SetEntPropEnt(ent, Prop_Send, "m_hOwnerEntity", client); // not needed ?
-	SetEntPropFloat(ent, Prop_Data, "m_flModelScale", g_equipment[equipment][EquipmentScale]);
+	if (g_equipment[equipment][EquipmentScale] > 0)
+	{
+		SetEntPropFloat(ent, Prop_Data, "m_flModelScale", g_equipment[equipment][EquipmentScale]);
+	}
 	
 	DispatchSpawn(ent);
 
