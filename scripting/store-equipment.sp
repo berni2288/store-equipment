@@ -95,9 +95,6 @@ public OnPluginStart()
 	
 	g_loadoutSlotList = CreateArray(ByteCountToCells(32));
 	
-	g_zombieReloaded = LibraryExists("zombiereloaded");
-	g_toggleEffects = LibraryExists("ToggleEffects");
-	
 	HookEvent("player_spawn", Event_PlayerSpawn);
 	HookEvent("player_hurt", Event_PlayerHurt); // sometimes player_death events dont fire, but the hurt does with remaining health = 0
 	HookEvent("player_death", Event_PlayerDeath);
@@ -112,6 +109,12 @@ public OnPluginStart()
 	RegAdminCmd("sm_editor", Command_OpenEditor, ADMFLAG_ROOT, "Opens equipment editor.");
 
 	Store_RegisterItemType("equipment", OnEquip, LoadItem);
+}
+
+public OnAllPluginsLoaded()
+{
+	g_zombieReloaded = LibraryExists("zombiereloaded");
+	g_toggleEffects = LibraryExists("specialfx");
 }
 
 /**
@@ -195,7 +198,7 @@ public Action:Event_PlayerSpawn(Handle:event, const String:name[], bool:dontBroa
 	new client = GetClientOfUserId(GetEventInt(event, "userid"));
 	
 	if (!g_zombieReloaded || (g_zombieReloaded && ZR_IsClientHuman(client)))
-		CreateTimer(1.0, SpawnTimer, GetClientSerial(client));
+		CreateTimer(client * (1.0 / GetClientCount()), SpawnTimer, GetClientSerial(client));
 	else
 		UnequipAll(client);
 	
@@ -343,6 +346,8 @@ public LoadItem(const String:itemName[], const String:attrs[])
 
 	new Handle:position = json_object_get(json, "position");
 
+	//PrintToServer("Loading: %s", g_equipment[g_equipmentCount][EquipmentModelPath]);
+
 	for (new i = 0; i <= 2; i++)
 		g_equipment[g_equipmentCount][EquipmentPosition][i] = json_array_get_float(position, i);
 
@@ -453,8 +458,8 @@ public Store_ItemUseAction:OnEquip(client, itemId, bool:equipped)
 	
 	if (!IsPlayerAlive(client))
 	{
-		PrintToChat(client, "%s%t", STORE_PREFIX, "Must be alive to equip");
-		return Store_DoNothing;
+		//PrintToChat(client, "%s%t", STORE_PREFIX, "Must be alive to equip");
+		return equipped ? Store_UnequipItem : Store_EquipItem;
 	}
 	
 	if (g_zombieReloaded && !ZR_IsClientHuman(client))
@@ -705,9 +710,9 @@ bool:Unequip(client, loadoutSlot, bool:destroy=true)
 					AcceptEntityInput(oldequip, "Kill");
 					return true;
 				}
-				if (strlen(g_equipment[g_equipmentCount][EquipmentPhysicsModelPath]) > 0)
+				if (strlen(g_equipment[equipment][EquipmentPhysicsModelPath]) > 0)
 				{
-					DispatchKeyValue(ent, "model", g_equipment[g_equipmentCount][EquipmentPhysicsModelPath]);
+					DispatchKeyValue(ent, "model", g_equipment[equipment][EquipmentPhysicsModelPath]);
 				}
 				else 
 				{
@@ -721,7 +726,21 @@ bool:Unequip(client, loadoutSlot, bool:destroy=true)
 				ActivateEntity(ent);
 
 				new Float:origin[3];
-				GetEntPropVector(oldequip, Prop_Send, "m_vecOrigin", origin);
+				new Float:len;
+				for (new i = 0; i < 3; i++)
+				{
+					new Float:n = g_equipment[equipment][EquipmentPosition][i];
+					if (n < 0) n *= -1;
+					len += n;
+				}
+				if (len > 20.0)
+				{
+					GetClientEyePosition(client, origin);
+				}
+				else
+				{
+					GetEntPropVector(oldequip, Prop_Send, "m_vecOrigin", origin);
+				}
 
 				TeleportEntity(ent, origin, NULL_VECTOR, velocity);
 
@@ -770,7 +789,9 @@ UnequipAll(client, bool:destroy=true)
 
 public Action:ShouldHide(ent, client)
 {
-	/*if (g_toggleEffects)
+	//PrintToServer("%i - %i - %i", g_toggleEffects, client, ShowClientEffects(client));
+
+	if (g_toggleEffects)
 		if (!ShowClientEffects(client))
 			return Plugin_Handled;
 			
@@ -787,7 +808,7 @@ public Action:ShouldHide(ent, client)
 			if (ent == g_iEquipment[GetEntPropEnt(client, Prop_Send, "m_hObserverTarget")][index])
 				return Plugin_Handled;
 		}
-	}*/
+	}
 	
 	return Plugin_Continue;
 }
