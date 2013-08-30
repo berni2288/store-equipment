@@ -13,7 +13,7 @@
 #define STORE_MAX_LOADOUTGAME_LENGTH	32
 #define STORE_MAX_LOADOUTCLASS_LENGTH	32
 
-#define STORE_MAX_ATTRIBUTES_LENGTH		1024
+#define STORE_MAX_ATTRIBUTES_LENGTH		10*1024
 
 functag Store_GetItemsCallback public(items[], count, any:data);
 functag Store_GetUserItemsCallback public(useritems[], bool:equipped[], useritemCount[], count, loadoutId, any:data);
@@ -23,7 +23,6 @@ funcenum Store_ItemGetAttributesCallback
 	public(const String:itemName[], const String:attrs[]),
 	public(const String:itemName[], const String:attrs[], any:data)
 }
-
 
 functag Store_GetCreditsCallback public(credits, any:data);
 functag Store_GiveCreditsCallback public(accountId, any:data);
@@ -38,7 +37,7 @@ forward Store_OnDatabaseInitialized();
 forward Store_OnReloadItems();
 forward Store_OnReloadItemsPost();
 
-enum Store_AquireMethod
+enum Store_AcquireMethod
 {
 	Store_Shop,
 	Store_Trade,
@@ -62,10 +61,11 @@ enum Store_AquireMethod
  *
  * @param accountId			The account ID of the player, use Store_GetClientAccountID to convert a client index to account ID.
  * @param name 				The name of the player.
+ * @param credits 			The amount of credits to give to the player if it's his first register. 
  *
  * @noreturn
  */
-native Store_Register(accountId, const String:name[] = "");
+native Store_Register(accountId, const String:name[] = "", credits = 0);
 
 /**
  * Registers a player in the database, provided his client index only. 
@@ -80,10 +80,11 @@ native Store_Register(accountId, const String:name[] = "");
  * As with all other store-backend methods, this method is completely asynchronous.
  *
  * @param client			Client index.
+ * @param credits 			The amount of credits to give to the player if it's his first register. 
  *
  * @noreturn
  */
-native Store_RegisterClient(client);
+native Store_RegisterClient(client, credits = 0);
 
 /**
  * Retrieves all item categories from the database. 
@@ -379,6 +380,14 @@ native bool:Store_IsItemRefundable(id);
  * @noreturn
  */
 native Store_GetItemAttributes(const String:itemName[], Store_ItemGetAttributesCallback:callback = Store_ItemGetAttributesCallback:0, any:data = 0);
+
+/** 
+ * Modifies item attributes asynchronously.
+ *
+ * @param itemName			Item's name.
+ *
+ * @noreturn
+ */
 native Store_WriteItemAttributes(const String:itemName[], const String:attrs[], Store_BuyItemCallback:callback = Store_BuyItemCallback:0, any:data = 0);
 
 /**
@@ -640,14 +649,14 @@ native Store_GiveDifferentCreditsToUsers(accountIds[], accountIdsLength, credits
  *
  * @param accountId		    The account ID of the player, use Store_GetClientAccountID to convert a client index to account ID.
  * @param itemId 			The ID of the item to give to the player.
- * @param aquireMethod 		
+ * @param acquireMethod 		
  * @param callback		    A callback which will be called when the operation is finished.
  * @param plugin			The plugin owner of the callback.
  * @param data              Extra data value to pass to the callback.
  *
  * @noreturn
  */
-native Store_GiveItem(accountId, itemId, Store_AquireMethod:aquireMethod = Store_Unknown, Store_GiveCreditsCallback:callback = Store_GiveCreditsCallback:INVALID_HANDLE, any:data = 0);
+native Store_GiveItem(accountId, itemId, Store_AcquireMethod:acquireMethod = Store_Unknown, Store_GiveCreditsCallback:callback = Store_GiveCreditsCallback:INVALID_HANDLE, any:data = 0);
 
 /**
  * Buys an item for a player, using his credits.
@@ -755,25 +764,6 @@ native Store_GetEquippedItemsByType(accountId, const String:type[], loadoutId, S
  * @noreturn
  */
 native Store_ReloadItemCache();
-
-stock Store_GetAccountIDFromAuthString(String:authString[])
-{
-	decl String:toks[3][16];
-	ExplodeString(authString, ":", toks, sizeof(toks), sizeof(toks[]));
-
-	new odd = StringToInt(toks[1]);
-	new halfAID = StringToInt(toks[2]);
-
-	return (halfAID*2) + odd;
-}
-
-stock Store_GetClientAccountID(client)
-{
-	decl String:buffer[32];
-	GetClientAuthString(client, buffer, sizeof(buffer));
-	
-	return Store_GetAccountIDFromAuthString(buffer);
-}
 
 public SharedPlugin:__pl_store_backend =
 {
