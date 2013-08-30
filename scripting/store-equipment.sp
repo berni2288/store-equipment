@@ -272,13 +272,13 @@ public Action:SpawnTimer(Handle:timer, any:serial)
 	if (g_zombieReloaded && !ZR_IsClientHuman(client))
 		return Plugin_Continue;
 		
-	Store_GetEquippedItemsByType(Store_GetClientAccountID(client), "equipment", Store_GetClientLoadout(client), OnGetPlayerEquipment, serial);
+	Store_GetEquippedItemsByType(GetSteamAccountID(client), "equipment", Store_GetClientLoadout(client), OnGetPlayerEquipment, serial);
 	return Plugin_Continue;
 }
 
 public Store_OnClientLoadoutChanged(client)
 {
-	Store_GetEquippedItemsByType(Store_GetClientAccountID(client), "equipment", Store_GetClientLoadout(client), OnGetPlayerEquipment, GetClientSerial(client));
+	Store_GetEquippedItemsByType(GetSteamAccountID(client), "equipment", Store_GetClientLoadout(client), OnGetPlayerEquipment, GetClientSerial(client));
 }
 
 public Store_OnReloadItems() 
