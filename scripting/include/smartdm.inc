@@ -170,6 +170,8 @@ stock Downloader_AddFileToDownloadsTable(const String:filename[])
 		{
 			if(FileExists(m_szMaterials[i]))
 				m_iNumFiles += Downloader_AddFileToDownloadsTable(m_szMaterials[i])+1;
+			else
+				PrintToServer("Unable to find 1: %s - source: %s", m_szMaterials[i], filename);
 		}
 	} else if(strcmp(m_szExt, ".vmt") == 0)
 	{
@@ -180,6 +182,8 @@ stock Downloader_AddFileToDownloadsTable(const String:filename[])
 			Format(m_szMaterial, sizeof(m_szMaterial), "materials\\%s.vtf", m_szMaterials[i]);
 			if(FileExists(m_szMaterial))
 				m_iNumFiles += Downloader_AddFileToDownloadsTable(m_szMaterial)+1;
+			else
+				PrintToServer("Unable to find 2: %s - source: %s", m_szMaterial, filename);
 		}
 	}
 

@@ -14,11 +14,13 @@
 enum Equipment
 {
 	String:EquipmentName[STORE_MAX_NAME_LENGTH],
-	String:EquipmentModelPath[PLATFORM_MAX_PATH], 
+	String:EquipmentModelPath[PLATFORM_MAX_PATH],
 	Float:EquipmentPosition[3],
 	Float:EquipmentAngles[3],
-	String:EquipmentFlag[2],
-	String:EquipmentAttachment[32]
+	String:EquipmentAttachment[32],
+	String:EquipmentPhysicsModelPath[PLATFORM_MAX_PATH],
+	EquipmentTeam[10],
+	Float:EquipmentScale
 }
 
 enum EquipmentPlayerModelSettings
@@ -43,10 +45,16 @@ new Handle:g_loadoutSlotList = INVALID_HANDLE;
 new g_playerModels[1024][EquipmentPlayerModelSettings];
 new g_playerModelCount = 0;
 
-new String:g_currentHats[MAXPLAYERS+1][STORE_MAX_NAME_LENGTH];
+new String:g_currentEquipment[MAXPLAYERS+1][32][STORE_MAX_NAME_LENGTH];
 new g_iEquipment[MAXPLAYERS+1][32];
 
 new bool:g_restartGame = false;
+
+new String:g_default_physics_model[PLATFORM_MAX_PATH];
+
+new g_player_death_equipment_effect;
+new String:g_player_death_dissolve_type[2];
+
 /**
  * Called before plugin is loaded.
  * 
@@ -79,15 +87,16 @@ public Plugin:myinfo =
  */
 public OnPluginStart()
 {
+	LoadConfig();
+
 	LoadTranslations("common.phrases");
 	LoadTranslations("store.phrases");
+	LoadTranslations("store.equipment.phrases");
 	
 	g_loadoutSlotList = CreateArray(ByteCountToCells(32));
 	
-	g_zombieReloaded = LibraryExists("zombiereloaded");
-	g_toggleEffects = LibraryExists("ToggleEffects");
-	
 	HookEvent("player_spawn", Event_PlayerSpawn);
+	HookEvent("player_hurt", Event_PlayerHurt); // sometimes player_death events dont fire, but the hurt does with remaining health = 0
 	HookEvent("player_death", Event_PlayerDeath);
 	
 	new Handle:hGameConf = LoadGameConfigFile("store-equipment.gamedata");
@@ -100,6 +109,33 @@ public OnPluginStart()
 	RegAdminCmd("sm_editor", Command_OpenEditor, ADMFLAG_ROOT, "Opens equipment editor.");
 
 	Store_RegisterItemType("equipment", OnEquip, LoadItem);
+}
+
+public OnAllPluginsLoaded()
+{
+	g_zombieReloaded = LibraryExists("zombiereloaded");
+	g_toggleEffects = LibraryExists("specialfx");
+}
+
+/**
+ * Load plugin config.
+ */
+LoadConfig() 
+{
+	new Handle:kv = CreateKeyValues("root");
+	
+	decl String:path[PLATFORM_MAX_PATH];
+	BuildPath(Path_SM, path, sizeof(path), "configs/store/equipment.cfg");
+	
+	if (!FileToKeyValues(kv, path)) 
+	{
+		CloseHandle(kv);
+		SetFailState("Can't read config file %s", path);
+	}
+
+	g_player_death_equipment_effect = KvGetNum(kv, "player_death_equipment_effect");
+	KvGetString(kv, "player_death_dissolve_type", g_player_death_dissolve_type, sizeof(g_default_physics_model), "0");
+	KvGetString(kv, "default_physics_model", g_default_physics_model, sizeof(g_default_physics_model), "models/props_junk/metalbucket01a.mdl");
 }
 
 /**
@@ -115,6 +151,15 @@ public OnMapStart()
 			Downloader_AddFileToDownloadsTable(g_equipment[item][EquipmentModelPath]);
 		}
 	}
+	AddFileToDownloadsTable("materials/models/gmod_tower/afro.vmt");
+	AddFileToDownloadsTable("materials/models/player/items/moustache/moustache.vmt");
+	AddFileToDownloadsTable("materials/models/player/items/moustache/moustache.vtf");
+	AddFileToDownloadsTable("materials/models/player/items/all_class/bowtie.vmt");
+	AddFileToDownloadsTable("materials/models/player/items/all_class/bowtie.vtf");
+	AddFileToDownloadsTable("materials/models/player/items/all_class/bowtie_blue.vmt");
+	AddFileToDownloadsTable("materials/models/player/items/all_class/bowtie_blue.vtf");
+	AddFileToDownloadsTable("materials/models/lightwarps/weapon_lightwarp.vtf");
+	AddFileToDownloadsTable("materials/models/player/pyro/pyro_lightwarp.vtf");
 }
 
 /** 
@@ -153,18 +198,34 @@ public Action:Event_PlayerSpawn(Handle:event, const String:name[], bool:dontBroa
 	new client = GetClientOfUserId(GetEventInt(event, "userid"));
 	
 	if (!g_zombieReloaded || (g_zombieReloaded && ZR_IsClientHuman(client)))
-		CreateTimer(1.0, SpawnTimer, GetClientSerial(client));
+		CreateTimer(client * (1.0 / GetClientCount()), SpawnTimer, GetClientSerial(client));
 	else
 		UnequipAll(client);
 	
 	return Plugin_Continue;
 }
 
-public Action:Event_PlayerDeath(Handle:event, const String:name[], bool:dontBroadcast)
+public Action:Event_PlayerHurt(Handle:event, const String:name[], bool:dontBroadcast)
 {
-	UnequipAll(GetClientOfUserId(GetEventInt(event, "userid")));
+	if (GetEventInt(event, "health") <= 0)
+	{
+		UnequipAll(GetClientOfUserId(GetEventInt(event, "userid")), false);
+	}
 	return Plugin_Continue;
 }
+
+public Action:Event_PlayerDeath(Handle:event, const String:name[], bool:dontBroadcast)
+{
+	UnequipAll(GetClientOfUserId(GetEventInt(event, "userid")), false);
+	return Plugin_Continue;
+}
+
+/*public OnEntityCreated(entity, const String:classname[])
+{
+	new String:othername[32];
+	GetEdictClassname(entity, othername, sizeof(othername));
+	LogMessage("OnEntityCreated: %s, %s", classname, othername);
+}*/
 
 /**
  * Called after a player has become a zombie.
@@ -230,6 +291,27 @@ public Store_OnReloadItems()
 	g_playerModelCount = 0;
 }
 
+json_object_get_string_default(Handle:hObj, const String:sKey[], String:sBuffer[], maxlength, String:sDefault[])
+{
+	new Handle:hElement = json_object_get(hObj, sKey);
+	if (hElement == INVALID_HANDLE)
+	{
+		strcopy(sBuffer, maxlength, sDefault);
+	}
+	else
+	{
+		if(json_is_string(hElement))
+		{
+			json_string_value(hElement, sBuffer, maxlength);
+		}
+		else
+		{
+			strcopy(sBuffer, maxlength, sDefault);
+		}
+		CloseHandle(hElement);
+	}
+}
+
 public LoadItem(const String:itemName[], const String:attrs[])
 {
 	strcopy(g_equipment[g_equipmentCount][EquipmentName], STORE_MAX_NAME_LENGTH, itemName);
@@ -239,8 +321,32 @@ public LoadItem(const String:itemName[], const String:attrs[])
 	new Handle:json = json_load(attrs);
 	json_object_get_string(json, "model", g_equipment[g_equipmentCount][EquipmentModelPath], PLATFORM_MAX_PATH);
 	json_object_get_string(json, "attachment", g_equipment[g_equipmentCount][EquipmentAttachment], 32);
+	json_object_get_string_default(json, "physicsmodel", g_equipment[g_equipmentCount][EquipmentPhysicsModelPath], PLATFORM_MAX_PATH, "");
+
+	for (new i = 0; i < 10; i++)
+	{
+		g_equipment[g_equipmentCount][EquipmentTeam][i] = -1;
+	}
+	new Handle:team = json_object_get(json, "team");
+	if (team != INVALID_HANDLE)
+	{
+		new size = json_array_size(team);
+		if (size > 0)
+		{
+			for (new i = 0; i < size; i++)
+			{
+				g_equipment[g_equipmentCount][EquipmentTeam][i] = json_array_get_int(team, i);
+			}
+		}
+		CloseHandle(team);
+	}
+
+
+	g_equipment[g_equipmentCount][EquipmentScale] = json_object_get_float(json, "scale");
 
 	new Handle:position = json_object_get(json, "position");
+
+	//PrintToServer("Loading: %s", g_equipment[g_equipmentCount][EquipmentModelPath]);
 
 	for (new i = 0; i <= 2; i++)
 		g_equipment[g_equipmentCount][EquipmentPosition][i] = json_array_get_float(position, i);
@@ -324,6 +430,9 @@ public OnGetPlayerEquipment(ids[], count, any:serial)
 	{
 		decl String:itemName[STORE_MAX_NAME_LENGTH];
 		Store_GetItemName(ids[index], itemName, sizeof(itemName));
+
+		decl String:displayName[STORE_MAX_DISPLAY_NAME_LENGTH];
+		Store_GetItemDisplayName(ids[index], displayName, sizeof(displayName));
 		
 		decl String:loadoutSlot[STORE_MAX_LOADOUTSLOT_LENGTH];
 		Store_GetItemLoadoutSlot(ids[index], loadoutSlot, sizeof(loadoutSlot));
@@ -336,7 +445,7 @@ public OnGetPlayerEquipment(ids[], count, any:serial)
 		Unequip(client, loadoutSlotIndex);
 		
 		if (!g_zombieReloaded || (g_zombieReloaded && ZR_IsClientHuman(client)))
-			Equip(client, loadoutSlotIndex, itemName);
+			Equip(client, loadoutSlotIndex, itemName, displayName);
 	}
 }
 
@@ -349,8 +458,8 @@ public Store_ItemUseAction:OnEquip(client, itemId, bool:equipped)
 	
 	if (!IsPlayerAlive(client))
 	{
-		PrintToChat(client, "%s%t", STORE_PREFIX, "Must be alive to equip");
-		return Store_DoNothing;
+		//PrintToChat(client, "%s%t", STORE_PREFIX, "Must be alive to equip");
+		return equipped ? Store_UnequipItem : Store_EquipItem;
 	}
 	
 	if (g_zombieReloaded && !ZR_IsClientHuman(client))
@@ -383,50 +492,44 @@ public Store_ItemUseAction:OnEquip(client, itemId, bool:equipped)
 	}
 	else
 	{
-		if (!Equip(client, loadoutSlotIndex, name))
-			return Store_DoNothing;
-		
 		decl String:displayName[STORE_MAX_DISPLAY_NAME_LENGTH];
 		Store_GetItemDisplayName(itemId, displayName, sizeof(displayName));
+
+		if (!Equip(client, loadoutSlotIndex, name, displayName))
+			return Store_DoNothing;
 		
 		PrintToChat(client, "%s%t", STORE_PREFIX, "Equipped item", displayName);
 		return Store_EquipItem;
 	}
 }
 
-bool:Equip(client, loadoutSlot, const String:name[])
+SetEntityVectors(source, ent, equipment)
 {
-	Unequip(client, loadoutSlot);
-		
-	new equipment = -1;
-	if (!GetTrieValue(g_equipmentNameIndex, name, equipment))
-	{
-		PrintToChat(client, "%s%t", STORE_PREFIX, "No item attributes");
-		return false;
-	}
-	
-	if (!LookupAttachment(client, g_equipment[equipment][EquipmentAttachment])) 
-	{
-		PrintToChat(client, "%s%t", STORE_PREFIX, "Player model unsupported");
-		return false;
-	}
-	
 	new Float:or[3];
 	new Float:ang[3];
 	new Float:fForward[3];
 	new Float:fRight[3];
 	new Float:fUp[3];
 	
-	GetClientAbsOrigin(client,or);
-	GetClientAbsAngles(client,ang);
+	GetEntPropVector(source, Prop_Send, "m_vecOrigin", or);
 
-	new String:clientModel[PLATFORM_MAX_PATH];
-	GetClientModel(client, clientModel, sizeof(clientModel));
+	decl String:clsname[255];
+	if (GetEntityNetClass(source, clsname, sizeof(clsname)))
+	{
+		if (FindSendPropOffs(clsname, "m_angRotation") >= 0)
+		{
+			GetEntPropVector(source, Prop_Send, "m_angRotation", ang);
+			//LogMessage("ang %i %i %i", ang[0], ang[1], ang[2]);
+		}
+	}
+
+	decl String:m_ModelName[PLATFORM_MAX_PATH];
+	GetEntPropString(source, Prop_Data, "m_ModelName", m_ModelName, sizeof(m_ModelName));
 	
 	new playerModel = -1;
 	for (new j = 0; j < g_playerModelCount; j++)
 	{	
-		if (StrEqual(g_equipment[equipment][EquipmentName], g_playerModels[j][EquipmentName]) && StrEqual(clientModel, g_playerModels[j][PlayerModelPath], false))
+		if (StrEqual(g_equipment[equipment][EquipmentName], g_playerModels[j][EquipmentName]) && StrEqual(m_ModelName, g_playerModels[j][PlayerModelPath], false))
 		{
 			playerModel = j;
 			break;
@@ -460,58 +563,234 @@ bool:Equip(client, loadoutSlot, const String:name[])
 		fOffset[1] = g_playerModels[playerModel][Position][1];
 		fOffset[2] = g_playerModels[playerModel][Position][2];		
 	}
-		
+
 	GetAngleVectors(ang, fForward, fRight, fUp);
 
 	or[0] += fRight[0]*fOffset[0]+fForward[0]*fOffset[1]+fUp[0]*fOffset[2];
 	or[1] += fRight[1]*fOffset[0]+fForward[1]*fOffset[1]+fUp[1]*fOffset[2];
 	or[2] += fRight[2]*fOffset[0]+fForward[2]*fOffset[1]+fUp[2]*fOffset[2];
 
+	TeleportEntity(ent, or, ang, NULL_VECTOR); 
+}
+
+GetEquipmentIndexFromName(const String:name[])
+{
+	new equipment = -1;
+	if (!GetTrieValue(g_equipmentNameIndex, name, equipment))
+	{
+		return -1;
+	}
+	return equipment;
+}
+
+bool:Equip(client, loadoutSlot, const String:name[], const String:displayName[]="")
+{
+	Unequip(client, loadoutSlot);
+
+	new equipment = GetEquipmentIndexFromName(name);
+	if (equipment < 0)
+	{
+		PrintToChat(client, "%s%t", STORE_PREFIX, "No item attributes");
+		return false;
+	}
+	
+	if (!LookupAttachment(client, g_equipment[equipment][EquipmentAttachment])) 
+	{
+		PrintToChat(client, "%s%t", STORE_PREFIX, "Player model unsupported");
+		return false;
+	}
+
+	if (g_equipment[equipment][EquipmentTeam] > 1) // assume 0 is unassigned, 1 is spec
+	{
+		if (GetClientTeam(client) != g_equipment[equipment][EquipmentTeam])
+		{
+			PrintToChat(client, "%s%t", STORE_PREFIX, "Equipment wrong team", strlen(displayName) == 0 ? name : displayName);
+			return false;
+		}
+	}
+
 	new ent = CreateEntityByName("prop_dynamic_override");
 	DispatchKeyValue(ent, "model", g_equipment[equipment][EquipmentModelPath]);
-	DispatchKeyValue(ent, "spawnflags", "256");
+	// DispatchKeyValue(ent, "spawnflags", "256"); // don't output on +use flag
 	DispatchKeyValue(ent, "solid", "0");
-	SetEntPropEnt(ent, Prop_Send, "m_hOwnerEntity", client);
+	//SetEntPropEnt(ent, Prop_Send, "m_hOwnerEntity", client); // not needed ?
+	if (g_equipment[equipment][EquipmentScale] > 0)
+	{
+		SetEntPropFloat(ent, Prop_Data, "m_flModelScale", g_equipment[equipment][EquipmentScale]);
+	}
 	
-	DispatchSpawn(ent);	
-	AcceptEntityInput(ent, "TurnOn", ent, ent, 0);
+	DispatchSpawn(ent);
+
+	ActivateEntity(ent);
+	AcceptEntityInput(ent, "TurnOn");
+	AcceptEntityInput(ent, "Enable");
+
+	SetEntityVectors(client, ent, equipment);
 	
-	strcopy(g_currentHats[client], STORE_MAX_NAME_LENGTH, name);
+	SetVariantString("!activator");
+	AcceptEntityInput(ent, "SetParent", client, ent);
+	
+	SetVariantString(g_equipment[equipment][EquipmentAttachment]);
+	AcceptEntityInput(ent, "SetParentAttachmentMaintainOffset");
+
+	strcopy(g_currentEquipment[client][loadoutSlot], STORE_MAX_NAME_LENGTH, name);
 	g_iEquipment[client][loadoutSlot] = ent;
 	
 	SDKHook(ent, SDKHook_SetTransmit, ShouldHide);
 	
-	TeleportEntity(ent, or, ang, NULL_VECTOR); 
-	
-	SetVariantString("!activator");
-	AcceptEntityInput(ent, "SetParent", client, ent, 0);
-	
-	SetVariantString(g_equipment[equipment][EquipmentAttachment]);
-	AcceptEntityInput(ent, "SetParentAttachmentMaintainOffset", ent, ent, 0);
-	
 	return true;
 }
 
-bool:Unequip(client, loadoutSlot)
-{      
-	if (g_iEquipment[client][loadoutSlot] != 0 && IsValidEdict(g_iEquipment[client][loadoutSlot]))
-	{
-		SDKUnhook(g_iEquipment[client][loadoutSlot], SDKHook_SetTransmit, ShouldHide);
-		AcceptEntityInput(g_iEquipment[client][loadoutSlot], "Kill");
-	}
-	
+bool:Unequip(client, loadoutSlot, bool:destroy=true)
+{
+	new oldequip = g_iEquipment[client][loadoutSlot];
 	g_iEquipment[client][loadoutSlot] = 0;
+
+	if (oldequip != 0 && IsValidEdict(oldequip))
+	{
+		SDKUnhook(oldequip, SDKHook_SetTransmit, ShouldHide);
+
+		if(destroy)
+		{
+			AcceptEntityInput(oldequip, "Kill");
+			return true;
+		}
+
+		switch(g_player_death_equipment_effect)
+		{
+			case 1: // stay on ragdoll
+			{
+				new ragdoll = GetEntPropEnt(client, Prop_Send, "m_hRagdoll");
+				if (ragdoll > 0 && IsValidEdict(ragdoll))
+				{
+					AcceptEntityInput(oldequip, "ClearParent");
+					
+					new equipment = GetEquipmentIndexFromName(g_currentEquipment[client][loadoutSlot]);
+					if (equipment < 0)
+					{
+						AcceptEntityInput(oldequip, "Kill");
+						return true;
+					}
+
+					SetEntityVectors(ragdoll, oldequip, equipment);
+	
+					SetVariantString("!activator");
+					AcceptEntityInput(oldequip, "SetParent", ragdoll, oldequip);
+					
+					SetVariantString(g_equipment[equipment][EquipmentAttachment]);
+					AcceptEntityInput(oldequip, "SetParentAttachmentMaintainOffset");
+
+					//LogMessage("OK %i %i", equipment, oldequip);
+				}
+			}
+			case 2: // physics
+			{
+				AcceptEntityInput(oldequip, "ClearParent");
+
+				new Float:velocity[3];
+				new ragdoll = GetEntPropEnt(client, Prop_Send, "m_hRagdoll");
+				if (ragdoll > 0 && IsValidEdict(ragdoll))
+				{
+					GetEntPropVector(ragdoll, Prop_Send, "m_vecRagdollVelocity", velocity);
+				}
+
+				velocity[0] *= 1.2;
+				velocity[1] *= 1.2;
+				velocity[2] *= 1.2;
+				
+				new equipment = GetEquipmentIndexFromName(g_currentEquipment[client][loadoutSlot]);
+				if (equipment < 0)
+				{
+					AcceptEntityInput(oldequip, "Kill");
+					return true;
+				}
+				new ent = CreateEntityByName("prop_physics_multiplayer");
+				if (ent < 0 || !IsValidEdict(ent))
+				{
+					AcceptEntityInput(oldequip, "Kill");
+					return true;
+				}
+				if (strlen(g_equipment[equipment][EquipmentPhysicsModelPath]) > 0)
+				{
+					DispatchKeyValue(ent, "model", g_equipment[equipment][EquipmentPhysicsModelPath]);
+				}
+				else 
+				{
+					DispatchKeyValue(ent, "model", g_default_physics_model);
+				}
+				DispatchKeyValue(ent, "spawnflags", "6");
+				DispatchKeyValue(ent, "physicsmode", "2");
+				DispatchKeyValue(ent, "rendermode", "10"); // invisible
+				DispatchKeyValue(ent, "renderamt", "0");
+				DispatchSpawn(ent);
+				ActivateEntity(ent);
+
+				new Float:origin[3];
+				new Float:len;
+				for (new i = 0; i < 3; i++)
+				{
+					new Float:n = g_equipment[equipment][EquipmentPosition][i];
+					if (n < 0) n *= -1;
+					len += n;
+				}
+				if (len > 20.0)
+				{
+					GetClientEyePosition(client, origin);
+				}
+				else
+				{
+					GetEntPropVector(oldequip, Prop_Send, "m_vecOrigin", origin);
+				}
+
+				TeleportEntity(ent, origin, NULL_VECTOR, velocity);
+
+				SetVariantString("!activator");
+				AcceptEntityInput(oldequip, "SetParent", ent, oldequip);
+
+				SetEntPropVector(ent, Prop_Data, "m_vecVelocity", velocity); // is this necessary ?
+
+				// kill the physics entity (and equipment as it is attached) in 10 seconds
+				new String:addoutput[64];
+				Format(addoutput, sizeof(addoutput), "OnUser1 !self:kill::%f:1", 10.0);
+				SetVariantString(addoutput);
+				AcceptEntityInput(ent, "AddOutput");
+				AcceptEntityInput(ent, "FireUser1");
+			}
+			case 3: // dissolver
+			{
+				AcceptEntityInput(oldequip, "ClearParent");
+				new dissolver = CreateEntityByName("env_entity_dissolver");
+				if (dissolver < 0 || !IsValidEdict(dissolver))
+				{
+					AcceptEntityInput(oldequip, "Kill");
+					return true;
+				}
+				DispatchKeyValue(dissolver, "dissolvetype", g_player_death_dissolve_type);
+				DispatchKeyValue(dissolver, "magnitude", "1");
+				DispatchKeyValue(dissolver, "target", "!activator");
+
+				AcceptEntityInput(dissolver, "Dissolve", oldequip);
+				AcceptEntityInput(dissolver, "Kill");
+			}
+			default: // 0/anything else = kill
+			{
+				AcceptEntityInput(oldequip, "Kill");
+			}
+		}
+	}
 	return true;
 }
 
-UnequipAll(client)
+UnequipAll(client, bool:destroy=true)
 {
 	for (new index = 0, size = GetArraySize(g_loadoutSlotList); index < size; index++)
-		Unequip(client, index);
+		Unequip(client, index, destroy);
 }
 
 public Action:ShouldHide(ent, client)
 {
+	//PrintToServer("%i - %i - %i", g_toggleEffects, client, ShowClientEffects(client));
+
 	if (g_toggleEffects)
 		if (!ShowClientEffects(client))
 			return Plugin_Handled;
@@ -628,7 +907,7 @@ public Editor_LoadoutSlotSelectHandle(Handle:menu, MenuAction:action, client, sl
 Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, Float:amount = 0.5)
 {
 	new Handle:menu = CreateMenu(Editor_ActionSelectHandle);
-	SetMenuTitle(menu, "Select loadout slot:");
+	SetMenuTitle(menu, "Select action:");
 
 	for (new bool:add = true; add >= false; add--)
 	{
@@ -681,25 +960,23 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 			new target = StringToInt(values[1]);
 			new loadoutSlot = StringToInt(values[2]);
 
-			//new entity = g_iEquipment[target][loadoutSlot];
-
 			decl String:modelPath[PLATFORM_MAX_PATH];
 			GetClientModel(target, modelPath, sizeof(modelPath));
 
 			new axis = values[3][0];
 			new bool:add = bool:StringToInt(values[4]);
 
-			new equipment = -1;
-			if (!GetTrieValue(g_equipmentNameIndex, g_currentHats[target], equipment))
+			new equipment = GetEquipmentIndexFromName(g_currentEquipment[target][loadoutSlot]);
+			if (equipment < 0)
 			{
 				PrintToChat(client, "%s%t", STORE_PREFIX, "No item attributes");
 				return;
-			}		
+			}
 
 			new playerModel = -1;
 			for (new j = 0; j < g_playerModelCount; j++)
 			{	
-				if (!StrEqual(g_currentHats[target], g_playerModels[j][EquipmentName]))
+				if (!StrEqual(g_currentEquipment[target][loadoutSlot], g_playerModels[j][EquipmentName]))
 					continue;
 
 				if (!StrEqual(modelPath, g_playerModels[j][PlayerModelPath], false))
@@ -712,7 +989,7 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 			if (playerModel == -1)
 			{
 				strcopy(g_playerModels[g_playerModelCount][PlayerModelPath], PLATFORM_MAX_PATH, modelPath);
-				strcopy(g_playerModels[g_playerModelCount][EquipmentName], STORE_MAX_NAME_LENGTH, g_currentHats[target]);
+				strcopy(g_playerModels[g_playerModelCount][EquipmentName], STORE_MAX_NAME_LENGTH, g_currentEquipment[target][loadoutSlot]);
 
 				for (new i = 0; i < 3; i++)
 				{
@@ -752,7 +1029,7 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 						g_playerModels[playerModel][Position][2] -= 0.5;
 				}
 
-				Equip(target, loadoutSlot, g_currentHats[target]);
+				Equip(target, loadoutSlot, g_currentEquipment[target][loadoutSlot]);
 				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);				
 			}
 		}
