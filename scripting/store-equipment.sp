@@ -151,15 +151,6 @@ public OnMapStart()
 			Downloader_AddFileToDownloadsTable(g_equipment[item][EquipmentModelPath]);
 		}
 	}
-	AddFileToDownloadsTable("materials/models/gmod_tower/afro.vmt");
-	AddFileToDownloadsTable("materials/models/player/items/moustache/moustache.vmt");
-	AddFileToDownloadsTable("materials/models/player/items/moustache/moustache.vtf");
-	AddFileToDownloadsTable("materials/models/player/items/all_class/bowtie.vmt");
-	AddFileToDownloadsTable("materials/models/player/items/all_class/bowtie.vtf");
-	AddFileToDownloadsTable("materials/models/player/items/all_class/bowtie_blue.vmt");
-	AddFileToDownloadsTable("materials/models/player/items/all_class/bowtie_blue.vtf");
-	AddFileToDownloadsTable("materials/models/lightwarps/weapon_lightwarp.vtf");
-	AddFileToDownloadsTable("materials/models/player/pyro/pyro_lightwarp.vtf");
 }
 
 /** 
