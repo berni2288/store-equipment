@@ -914,6 +914,7 @@ Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, Float:amount = 0.5)
 		for (new axis = 'x'; axis <= 'z'; axis++)
 		{
 			Editor_AddMenuItem(menu, target, "position", loadoutSlot, axis, add, amount);
+			Editor_AddMenuItem(menu, target, "angles", loadoutSlot, axis, add, amount);
 		}
 	}
 
@@ -937,7 +938,18 @@ Editor_AddMenuItem(Handle:menu, target, const String:actionType[], loadoutSlot, 
 		else
 			Format(text, sizeof(text), "%s-", text);
 
-		Format(text, sizeof(text), "%s %.1f", text, amount);
+		Format(text, sizeof(text), "Position %s %.1f", text, amount);
+	}
+	else if (StrEqual(actionType, "angles"))
+	{
+		Format(text, sizeof(text), "%c ", CharToUpper(axis));
+
+		if (add)
+			Format(text, sizeof(text), "%s+", text);
+		else
+			Format(text, sizeof(text), "%s-", text);
+
+		Format(text, sizeof(text), "Angles %s %.1f", text, amount);
 	}
 	else
 	{
@@ -956,6 +968,8 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 		{
 			new String:values[5][32];
 			ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
+			
+			//PrintToChatAll(values[0]); // debug msg :-)
 
 			new target = StringToInt(values[1]);
 			new loadoutSlot = StringToInt(values[2]);
@@ -1004,6 +1018,33 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 			if (StrEqual(values[0], "save"))
 			{
 				Editor_SavePlayerModelAttributes(client, equipment);
+			}
+			else if(StrEqual(values[0], "angles"))
+			{
+				if (axis == 'x')
+				{
+					if (add)
+						g_playerModels[playerModel][Angles][0] += 0.5;
+					else
+						g_playerModels[playerModel][Angles][0] -= 0.5;
+				}
+				else if (axis == 'y')
+				{
+					if (add)
+						g_playerModels[playerModel][Angles][1] += 0.5;
+					else
+						g_playerModels[playerModel][Angles][1] -= 0.5;
+				} 
+				else if (axis == 'z')
+				{
+					if (add)
+						g_playerModels[playerModel][Angles][2] += 0.5;
+					else
+						g_playerModels[playerModel][Angles][2] -= 0.5;
+				}
+
+				Equip(target, loadoutSlot, g_currentEquipment[target][loadoutSlot]);
+				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);				
 			}
 			else
 			{
