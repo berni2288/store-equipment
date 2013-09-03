@@ -33,8 +33,8 @@ enum EquipmentPlayerModelSettings
 
 new Handle:g_hLookupAttachment = INVALID_HANDLE;
 
-new bool:g_zombieReloaded;
-new bool:g_toggleEffects;
+new bool:g_bZombieReloaded;
+new bool:g_bToggleEffects;
 
 new g_equipment[1024][Equipment];
 new g_equipmentCount = 0;
@@ -45,15 +45,17 @@ new Handle:g_loadoutSlotList = INVALID_HANDLE;
 new g_playerModels[1024][EquipmentPlayerModelSettings];
 new g_playerModelCount = 0;
 
-new String:g_currentEquipment[MAXPLAYERS+1][32][STORE_MAX_NAME_LENGTH];
+new String:g_sCurrentEquipment[MAXPLAYERS+1][32][STORE_MAX_NAME_LENGTH];
 new g_iEquipment[MAXPLAYERS+1][32];
 
-new bool:g_restartGame = false;
+new bool:g_bRestartGame = false;
 
 new String:g_default_physics_model[PLATFORM_MAX_PATH];
 
 new g_player_death_equipment_effect;
-new String:g_player_death_dissolve_type[2];
+new String:g_player_death_dissolve_type[2]; // leave this as a string as it's used in DispatchKeyValue(cell, string, *string*)
+
+new bool:g_bHideOwnItems = true;
 
 /**
  * Called before plugin is loaded.
@@ -78,7 +80,7 @@ public Plugin:myinfo =
 	name        = "[Store] Equipment",
 	author      = "alongub",
 	description = "Equipment component for [Store]",
-	version     = "1.1-alpha",
+	version     = STORE_VERSION,
 	url         = "https://github.com/alongubkin/store"
 };
 
@@ -106,15 +108,16 @@ public OnPluginStart()
 	PrepSDKCall_AddParameter(SDKType_String, SDKPass_Pointer);
 	g_hLookupAttachment = EndPrepSDKCall();	
 
-	RegAdminCmd("sm_editor", Command_OpenEditor, ADMFLAG_ROOT, "Opens equipment editor.");
+	RegAdminCmd("store_editor", Command_OpenEditor, ADMFLAG_RCON, "Opens store-equipment editor.");
+	RegAdminCmd("store_hideownitems", Command_HideOwnItems, ADMFLAG_RCON, "Toggles hiding own items for debugging.");
 
 	Store_RegisterItemType("equipment", OnEquip, LoadItem);
 }
 
 public OnAllPluginsLoaded()
 {
-	g_zombieReloaded = LibraryExists("zombiereloaded");
-	g_toggleEffects = LibraryExists("specialfx");
+	g_bZombieReloaded = LibraryExists("zombiereloaded");
+	g_bToggleEffects = LibraryExists("specialfx");
 }
 
 /**
@@ -134,7 +137,7 @@ LoadConfig()
 	}
 
 	g_player_death_equipment_effect = KvGetNum(kv, "player_death_equipment_effect");
-	KvGetString(kv, "player_death_dissolve_type", g_player_death_dissolve_type, sizeof(g_default_physics_model), "0");
+	KvGetString(kv, "player_death_dissolve_type", g_player_death_dissolve_type, sizeof(g_player_death_dissolve_type), "0");
 	KvGetString(kv, "default_physics_model", g_default_physics_model, sizeof(g_default_physics_model), "models/props_junk/metalbucket01a.mdl");
 }
 
@@ -160,7 +163,7 @@ public OnLibraryAdded(const String:name[])
 {
 	if (StrEqual(name, "zombiereloaded"))
 	{
-		g_zombieReloaded = true;
+		g_bZombieReloaded = true;
 	}
 	else if (StrEqual(name, "store-inventory"))
 	{
@@ -175,7 +178,7 @@ public OnLibraryRemoved(const String:name[])
 {
 	if (StrEqual(name, "zombiereloaded"))
 	{
-		g_zombieReloaded = false;
+		g_bZombieReloaded = false;
 	}
 }
 
@@ -188,7 +191,7 @@ public Action:Event_PlayerSpawn(Handle:event, const String:name[], bool:dontBroa
 {
 	new client = GetClientOfUserId(GetEventInt(event, "userid"));
 	
-	if (!g_zombieReloaded || (g_zombieReloaded && ZR_IsClientHuman(client)))
+	if (!g_bZombieReloaded || (g_bZombieReloaded && ZR_IsClientHuman(client)))
 		CreateTimer(client * (1.0 / GetClientCount()), SpawnTimer, GetClientSerial(client));
 	else
 		UnequipAll(client);
@@ -260,7 +263,7 @@ public Action:SpawnTimer(Handle:timer, any:serial)
 	if (IsFakeClient(client))
 		return Plugin_Continue;
 		
-	if (g_zombieReloaded && !ZR_IsClientHuman(client))
+	if (g_bZombieReloaded && !ZR_IsClientHuman(client))
 		return Plugin_Continue;
 		
 	Store_GetEquippedItemsByType(GetSteamAccountID(client), "equipment", Store_GetClientLoadout(client), OnGetPlayerEquipment, serial);
@@ -435,7 +438,7 @@ public OnGetPlayerEquipment(ids[], count, any:serial)
 		
 		Unequip(client, loadoutSlotIndex);
 		
-		if (!g_zombieReloaded || (g_zombieReloaded && ZR_IsClientHuman(client)))
+		if (!g_bZombieReloaded || (g_bZombieReloaded && ZR_IsClientHuman(client)))
 			Equip(client, loadoutSlotIndex, itemName, displayName);
 	}
 }
@@ -453,7 +456,7 @@ public Store_ItemUseAction:OnEquip(client, itemId, bool:equipped)
 		return equipped ? Store_UnequipItem : Store_EquipItem;
 	}
 	
-	if (g_zombieReloaded && !ZR_IsClientHuman(client))
+	if (g_bZombieReloaded && !ZR_IsClientHuman(client))
 	{
 		PrintToChat(client, "%s%t", STORE_PREFIX, "Must be human to equip");	
 		return Store_DoNothing;
@@ -624,7 +627,7 @@ bool:Equip(client, loadoutSlot, const String:name[], const String:displayName[]=
 	SetVariantString(g_equipment[equipment][EquipmentAttachment]);
 	AcceptEntityInput(ent, "SetParentAttachmentMaintainOffset");
 
-	strcopy(g_currentEquipment[client][loadoutSlot], STORE_MAX_NAME_LENGTH, name);
+	strcopy(g_sCurrentEquipment[client][loadoutSlot], STORE_MAX_NAME_LENGTH, name);
 	g_iEquipment[client][loadoutSlot] = ent;
 	
 	SDKHook(ent, SDKHook_SetTransmit, ShouldHide);
@@ -656,7 +659,7 @@ bool:Unequip(client, loadoutSlot, bool:destroy=true)
 				{
 					AcceptEntityInput(oldequip, "ClearParent");
 					
-					new equipment = GetEquipmentIndexFromName(g_currentEquipment[client][loadoutSlot]);
+					new equipment = GetEquipmentIndexFromName(g_sCurrentEquipment[client][loadoutSlot]);
 					if (equipment < 0)
 					{
 						AcceptEntityInput(oldequip, "Kill");
@@ -689,7 +692,7 @@ bool:Unequip(client, loadoutSlot, bool:destroy=true)
 				velocity[1] *= 1.2;
 				velocity[2] *= 1.2;
 				
-				new equipment = GetEquipmentIndexFromName(g_currentEquipment[client][loadoutSlot]);
+				new equipment = GetEquipmentIndexFromName(g_sCurrentEquipment[client][loadoutSlot]);
 				if (equipment < 0)
 				{
 					AcceptEntityInput(oldequip, "Kill");
@@ -780,18 +783,23 @@ UnequipAll(client, bool:destroy=true)
 
 public Action:ShouldHide(ent, client)
 {
-	//PrintToServer("%i - %i - %i", g_toggleEffects, client, ShowClientEffects(client));
+	// if not hiding any own items, just show them all
+	if (!g_bHideOwnItems)
+		return Plugin_Continue;
 
-	if (g_toggleEffects)
+	// hide all items for the client if they have the toggle special fx cookie set
+	if (g_bToggleEffects)
 		if (!ShowClientEffects(client))
 			return Plugin_Handled;
-			
+	
+	// hide items on ourself to stop obstructions to first person view
 	for (new index = 0, size = GetArraySize(g_loadoutSlotList); index < size; index++)
 	{
 		if (ent == g_iEquipment[client][index])
 			return Plugin_Handled;
 	}
 	
+	// hide items on our observer target if in first person mode
 	if (IsClientInGame(client) && GetEntProp(client, Prop_Send, "m_iObserverMode") == 4 && GetEntPropEnt(client, Prop_Send, "m_hObserverTarget") >= 0)
 	{
 		for (new index = 0, size = GetArraySize(g_loadoutSlotList); index < size; index++)
@@ -813,6 +821,13 @@ stock bool:LookupAttachment(client, String:point[])
 		return false;
 	
 	return SDKCall(g_hLookupAttachment, client, point);
+}
+
+public Action:Command_HideOwnItems(client, args)
+{
+	g_bHideOwnItems = !g_bHideOwnItems;
+	ReplyToCommand(client, "%sHiding own items: %i", STORE_PREFIX, g_bHideOwnItems);
+	return Plugin_Handled;
 }
 
 public Action:Command_OpenEditor(client, args)
@@ -971,7 +986,7 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 			new axis = values[3][0];
 			new bool:add = bool:StringToInt(values[4]);
 
-			new equipment = GetEquipmentIndexFromName(g_currentEquipment[target][loadoutSlot]);
+			new equipment = GetEquipmentIndexFromName(g_sCurrentEquipment[target][loadoutSlot]);
 			if (equipment < 0)
 			{
 				PrintToChat(client, "%s%t", STORE_PREFIX, "No item attributes");
@@ -981,7 +996,7 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 			new playerModel = -1;
 			for (new j = 0; j < g_playerModelCount; j++)
 			{	
-				if (!StrEqual(g_currentEquipment[target][loadoutSlot], g_playerModels[j][EquipmentName]))
+				if (!StrEqual(g_sCurrentEquipment[target][loadoutSlot], g_playerModels[j][EquipmentName]))
 					continue;
 
 				if (!StrEqual(modelPath, g_playerModels[j][PlayerModelPath], false))
@@ -994,7 +1009,7 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 			if (playerModel == -1)
 			{
 				strcopy(g_playerModels[g_playerModelCount][PlayerModelPath], PLATFORM_MAX_PATH, modelPath);
-				strcopy(g_playerModels[g_playerModelCount][EquipmentName], STORE_MAX_NAME_LENGTH, g_currentEquipment[target][loadoutSlot]);
+				strcopy(g_playerModels[g_playerModelCount][EquipmentName], STORE_MAX_NAME_LENGTH, g_sCurrentEquipment[target][loadoutSlot]);
 
 				for (new i = 0; i < 3; i++)
 				{
@@ -1034,7 +1049,7 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 						g_playerModels[playerModel][Angles][2] -= 0.5;
 				}
 
-				Equip(target, loadoutSlot, g_currentEquipment[target][loadoutSlot]);
+				Equip(target, loadoutSlot, g_sCurrentEquipment[target][loadoutSlot]);
 				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);				
 			}
 			else
@@ -1061,7 +1076,7 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 						g_playerModels[playerModel][Position][2] -= 0.5;
 				}
 
-				Equip(target, loadoutSlot, g_currentEquipment[target][loadoutSlot]);
+				Equip(target, loadoutSlot, g_sCurrentEquipment[target][loadoutSlot]);
 				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);				
 			}
 		}
@@ -1106,16 +1121,16 @@ Editor_SavePlayerModelAttributes(client, equipment)
 public Editor_OnSave(bool:success, any:client)
 {
 	PrintToChat(client, "%sSave successful.", STORE_PREFIX);
-	g_restartGame = true;
+	g_bRestartGame = true;
 	Store_ReloadItemCache();
 }
 
 public Store_OnReloadItemsPost()
 {
-	if (g_restartGame)
+	if (g_bRestartGame)
 	{
 		ServerCommand("mp_restartgame 1");
-		g_restartGame = false;
+		g_bRestartGame = false;
 	}
 }
 
