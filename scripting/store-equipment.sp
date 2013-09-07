@@ -192,7 +192,7 @@ public Action:Event_PlayerSpawn(Handle:event, const String:name[], bool:dontBroa
 	new client = GetClientOfUserId(GetEventInt(event, "userid"));
 	
 	if (!g_bZombieReloaded || (g_bZombieReloaded && ZR_IsClientHuman(client)))
-		CreateTimer(client * (1.0 / GetClientCount()), SpawnTimer, GetClientSerial(client));
+		CreateTimer(1.0, SpawnTimer, GetClientSerial(client));
 	else
 		UnequipAll(client);
 	
