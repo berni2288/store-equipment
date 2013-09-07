@@ -386,6 +386,8 @@ public LoadItem(const String:itemName[], const String:attrs[])
 	// todo: 'beautified' json causes an error invalid handle when calling DestroyJSON (fine when compacted, parser or impl error?)
 	DestroyJSON(json);
 
+	PrintToServer("Finished loading %s", itemName);
+
 	g_equipmentCount++;
 }
 
