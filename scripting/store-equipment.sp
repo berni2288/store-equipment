@@ -1083,7 +1083,7 @@ Editor_SavePlayerModelAttributes(client, equipment)
 	if (g_playerModelCount > 0) 
 	{
 		new Handle:playerModels = CreateArray(1);
-		new count;
+		new count = 0;
 		for (new j = 0; j < g_playerModelCount; j++)
 		{	
 			if (!StrEqual(g_equipment[equipment][EquipmentName], g_playerModels[j][EquipmentName]))
@@ -1094,7 +1094,7 @@ Editor_SavePlayerModelAttributes(client, equipment)
 			Editor_AppendJSONVector(model, "position", g_playerModels[j][Position]);
 			Editor_AppendJSONVector(model, "angles", g_playerModels[j][Angles]);
 
-			SetArrayCell(playerModels, count++, model);
+			PushArrayCell(playerModels, count++, model);
 		}
 
 		JSONSetArray(json, "playermodels", playerModels);
