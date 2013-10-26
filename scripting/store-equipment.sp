@@ -1094,7 +1094,7 @@ Editor_SavePlayerModelAttributes(client, equipment)
 			Editor_AppendJSONVector(model, "position", g_playerModels[j][Position]);
 			Editor_AppendJSONVector(model, "angles", g_playerModels[j][Angles]);
 
-			PushArrayCell(playerModels, count++, model);
+			PushArrayCell(playerModels, model);
 		}
 
 		JSONSetArray(json, "playermodels", playerModels);
