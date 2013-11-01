@@ -1083,7 +1083,6 @@ Editor_SavePlayerModelAttributes(client, equipment)
 	if (g_playerModelCount > 0) 
 	{
 		new Handle:playerModels = CreateArray(1);
-		new count = 0;
 		for (new j = 0; j < g_playerModelCount; j++)
 		{	
 			if (!StrEqual(g_equipment[equipment][EquipmentName], g_playerModels[j][EquipmentName]))
