@@ -1127,8 +1127,9 @@ Editor_AppendJSONVector(Handle:json, const String:key[], Float:vector[])
 {
 	new Handle:array = CreateArray(1, 3);
 
-	for (new i = 0; i < 3; i++)
-		SetArrayCell(array, i, vector[i]);
+	for (new i = 0; i < 3; i++) {
+		SetArrayCell(array, i, JSONCreateFloat(vector[i]));
+	}
 
 	JSONSetArray(json, key, array);		
 }
