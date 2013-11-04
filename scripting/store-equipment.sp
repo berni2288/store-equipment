@@ -894,18 +894,39 @@ public Editor_LoadoutSlotSelectHandle(Handle:menu, MenuAction:action, client, sl
 	}
 }
 
+/*
+ * Generate a menu with the
+ * following items (In this order)
+ * 
+ * - Position X-
+ * - Position X+
+ * - Position Y-
+ * - Position Y+
+ * - Position Z-
+ * - Position Z+
+ * - Angle X-
+ * - Angle X+
+ * - Angle Y-
+ * - Angle Y+
+ * - Angle Z-
+ * - Angle Z+
+ * - Save
+*/
 Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, menuSelectionPosition = 0, Float:amount = 0.5)
 {
 	new Handle:menu = CreateMenu(Editor_ActionSelectHandle);
 	SetMenuTitle(menu, "Select action:");
 
-	for (new bool:add = true; add >= false; add--)
+	for (new axis = 'x'; axis <= 'z'; axis++)
 	{
-		for (new axis = 'x'; axis <= 'z'; axis++)
-		{
-			Editor_AddMenuItem(menu, target, "position", loadoutSlot, axis, add, amount);
-			Editor_AddMenuItem(menu, target, "angles", loadoutSlot, axis, add, amount);
-		}
+		Editor_AddMenuItem(menu, target, "position", loadoutSlot, axis, false, amount);
+		Editor_AddMenuItem(menu, target, "position", loadoutSlot, axis, true,  amount);
+	}
+
+	for (new axis = 'x'; axis <= 'z'; axis++)
+	{
+		Editor_AddMenuItem(menu, target, "angles",   loadoutSlot, axis, false, amount);
+		Editor_AddMenuItem(menu, target, "angles",   loadoutSlot, axis, true,  amount);
 	}
 
 	Editor_AddMenuItem(menu, target, "save", loadoutSlot);
@@ -919,27 +940,22 @@ Editor_AddMenuItem(Handle:menu, target, const String:actionType[], loadoutSlot, 
 
 	decl String:text[32];
 
-	if (StrEqual(actionType, "position"))
+	if (StrEqual(actionType, "position") || StrEqual(actionType, "angles"))
 	{
+		decl String:actionTypeDisplay[16];
+		strcopy(actionTypeDisplay, sizeof(actionTypeDisplay), actionType);
+
+		// Make the first letter uppercase for the menu
+		actionTypeDisplay[0] = CharToUpper(actionTypeDisplay[0]);
+
 		Format(text, sizeof(text), "%c ", CharToUpper(axis));
 
 		if (add)
-			Format(text, sizeof(text), "%s+", text);
+			Format(text, sizeof(text), "%s   +", text);
 		else
-			Format(text, sizeof(text), "%s-", text);
+			Format(text, sizeof(text), "%s   - ", text);
 
-		Format(text, sizeof(text), "Position %s %.1f", text, amount);
-	}
-	else if (StrEqual(actionType, "angles"))
-	{
-		Format(text, sizeof(text), "%c ", CharToUpper(axis));
-
-		if (add)
-			Format(text, sizeof(text), "%s+", text);
-		else
-			Format(text, sizeof(text), "%s-", text);
-
-		Format(text, sizeof(text), "Angles %s %.1f", text, amount);
+		Format(text, sizeof(text), "%s %s %.1f", actionType, text, amount);
 	}
 	else
 	{
