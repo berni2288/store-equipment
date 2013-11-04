@@ -894,7 +894,7 @@ public Editor_LoadoutSlotSelectHandle(Handle:menu, MenuAction:action, client, sl
 	}
 }
 
-Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, Float:amount = 0.5)
+Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, menuSelectionPosition = 0, Float:amount = 0.5)
 {
 	new Handle:menu = CreateMenu(Editor_ActionSelectHandle);
 	SetMenuTitle(menu, "Select action:");
@@ -909,7 +909,7 @@ Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, Float:amount = 0.5)
 	}
 
 	Editor_AddMenuItem(menu, target, "save", loadoutSlot);
-	DisplayMenu(menu, client, 0);
+	DisplayMenuAtItem(menu, client, menuSelectionPosition, 0);
 }
 
 Editor_AddMenuItem(Handle:menu, target, const String:actionType[], loadoutSlot, axis = 0, bool:add = false, Float:amount = 0.0)
@@ -1034,7 +1034,7 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 				}
 
 				Equip(target, loadoutSlot, g_sCurrentEquipment[target][loadoutSlot]);
-				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);				
+				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, GetMenuSelectionPosition());				
 			}
 			else
 			{
@@ -1061,7 +1061,7 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 				}
 
 				Equip(target, loadoutSlot, g_sCurrentEquipment[target][loadoutSlot]);
-				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);				
+				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, GetMenuSelectionPosition());				
 			}
 		}
 	}
