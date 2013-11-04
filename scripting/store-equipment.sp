@@ -403,7 +403,7 @@ public OnGetPlayerEquipment(ids[], count, any:serial)
 	
 	if (!IsPlayerAlive(client))
 		return;
-		
+
 	for (new index = 0; index < count; index++)
 	{
 		decl String:itemName[STORE_MAX_NAME_LENGTH];
@@ -1091,32 +1091,34 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 Editor_SavePlayerModelAttributes(client, equipment)
 {	
 	new Handle:json = CreateJSON();
-	JSONSetString(json, "model", g_equipment[equipment][EquipmentModelPath]);
-	Editor_AppendJSONVector(json, "position", g_equipment[equipment][EquipmentPosition]);
-	Editor_AppendJSONVector(json, "angles", g_equipment[equipment][EquipmentAngles]);
+	JSONSetString(json, "model",      g_equipment[equipment][EquipmentModelPath]);
+	JSONSetArray(json,  "position",   Editor_CreateDynamicVectorArray(g_equipment[equipment][EquipmentPosition]));
+	JSONSetArray(json,  "angles",     Editor_CreateDynamicVectorArray(g_equipment[equipment][EquipmentAngles]));
 	JSONSetString(json, "attachment", g_equipment[equipment][EquipmentAttachment]);
 
 	if (g_playerModelCount > 0) 
 	{
 		new Handle:playerModels = CreateArray(1);
 		for (new j = 0; j < g_playerModelCount; j++)
-		{	
+		{
 			if (!StrEqual(g_equipment[equipment][EquipmentName], g_playerModels[j][EquipmentName]))
 				continue;
 
-			new Handle:model = CreateJSON();
+			new Handle:model = CreateTrie();
 			JSONSetString(model, "playermodel", g_playerModels[j][PlayerModelPath]);
-			Editor_AppendJSONVector(model, "position", g_playerModels[j][Position]);
-			Editor_AppendJSONVector(model, "angles", g_playerModels[j][Angles]);
+			JSONSetArray(model,  "position"   , Editor_CreateDynamicVectorArray(g_playerModels[j][Position]));
+			JSONSetArray(model,  "angles",      Editor_CreateDynamicVectorArray(g_playerModels[j][Angles]));
 
-			PushArrayCell(playerModels, model);
+			PushArrayCell(playerModels, JSONCreateObject(model));
 		}
 
 		JSONSetArray(json, "playermodels", playerModels);
 	}
 
 	new String:sJSON[10 * 1024];
-	EncodeJSON(json, sJSON, sizeof(sJSON));	
+
+	// Beautify is disable for now, as EasyJSON freaks out when decoding it again.
+	EncodeJSON(json, sJSON, sizeof(sJSON), false);
 
 	CloseHandle(json);
 
@@ -1139,7 +1141,7 @@ public Store_OnReloadItemsPost()
 	}
 }
 
-Editor_AppendJSONVector(Handle:json, const String:key[], Float:vector[])
+Handle:Editor_CreateDynamicVectorArray(Float:vector[])
 {
 	new Handle:array = CreateArray(1, 3);
 
@@ -1147,5 +1149,5 @@ Editor_AppendJSONVector(Handle:json, const String:key[], Float:vector[])
 		SetArrayCell(array, i, JSONCreateFloat(vector[i]));
 	}
 
-	JSONSetArray(json, key, array);		
+	return array;
 }
