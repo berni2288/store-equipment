@@ -1136,7 +1136,6 @@ public Store_OnReloadItemsPost()
 {
 	if (g_bRestartGame)
 	{
-		ServerCommand("mp_restartgame 1");
 		g_bRestartGame = false;
 	}
 }
