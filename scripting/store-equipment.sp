@@ -5,7 +5,7 @@
 #include <sdkhooks>
 #include <smartdm>
 #include <store>
-#include <EasyJSON>
+#include <smjansson>
 
 #undef REQUIRE_PLUGIN
 #include <ToggleEffects>
@@ -111,7 +111,7 @@ public OnPluginStart()
 	RegAdminCmd("store_editor", Command_OpenEditor, ADMFLAG_RCON, "Opens store-equipment editor.");
 	RegAdminCmd("store_hideownitems", Command_HideOwnItems, ADMFLAG_RCON, "Toggles hiding own items for debugging.");
 
-	//Store_RegisterItemType("equipment", OnEquip, LoadItem);
+	Store_RegisterItemType("equipment", OnEquip, LoadItem);
 }
 
 public OnAllPluginsLoaded()
@@ -285,106 +285,124 @@ public Store_OnReloadItems()
 	g_playerModelCount = 0;
 }
 
+json_object_get_string_default(Handle:hObj, const String:sKey[], String:sBuffer[], maxlength, String:sDefault[])
+{
+	new Handle:hElement = json_object_get(hObj, sKey);
+	if (hElement == INVALID_HANDLE)
+	{
+		strcopy(sBuffer, maxlength, sDefault);
+	}
+	else
+	{
+		if(json_is_string(hElement))
+		{
+			json_string_value(hElement, sBuffer, maxlength);
+		}
+		else
+		{
+			strcopy(sBuffer, maxlength, sDefault);
+		}
+		CloseHandle(hElement);
+	}
+}
+
 public LoadItem(const String:itemName[], const String:attrs[])
 {
-
-	PrintToServer("Loading item '%s'", itemName);
-
 	strcopy(g_equipment[g_equipmentCount][EquipmentName], STORE_MAX_NAME_LENGTH, itemName);
 
 	SetTrieValue(g_equipmentNameIndex, g_equipment[g_equipmentCount][EquipmentName], g_equipmentCount);
 
-	new Handle:json = DecodeJSON(attrs);
-	if (json == INVALID_HANDLE)
+	new Handle:json = json_load(attrs);
+	json_object_get_string(json, "model", g_equipment[g_equipmentCount][EquipmentModelPath], PLATFORM_MAX_PATH);
+	json_object_get_string(json, "attachment", g_equipment[g_equipmentCount][EquipmentAttachment], 32);
+	json_object_get_string_default(json, "physicsmodel", g_equipment[g_equipmentCount][EquipmentPhysicsModelPath], PLATFORM_MAX_PATH, "");
+
+	for (new i = 0; i < 10; i++)
 	{
-		Store_LogError("Error parsing item '%s' attrs,\n %s", itemName, attrs);
-		return;
+		g_equipment[g_equipmentCount][EquipmentTeam][i] = -1;
+	}
+	new Handle:team = json_object_get(json, "team");
+	if (team != INVALID_HANDLE)
+	{
+		new size = json_array_size(team);
+		if (size > 0)
+		{
+			for (new i = 0; i < size; i++)
+			{
+				g_equipment[g_equipmentCount][EquipmentTeam][i] = json_array_get_int(team, i);
+			}
+		}
+		CloseHandle(team);
 	}
 
-	if (!JSONGetString(json, "model", g_equipment[g_equipmentCount][EquipmentModelPath], PLATFORM_MAX_PATH))
-	{
-		Store_LogError("Item '%s' does not contain a model in json attributes", itemName);
-		return;
-	}
 
-	if (!JSONGetString(json, "attachment", g_equipment[g_equipmentCount][EquipmentAttachment], 32))
-		strcopy(g_equipment[g_equipmentCount][EquipmentAttachment], 32, "forward");
+	g_equipment[g_equipmentCount][EquipmentScale] = json_object_get_float(json, "scale");
 
-	if (!JSONGetString(json, "physicsmodel", g_equipment[g_equipmentCount][EquipmentPhysicsModelPath], PLATFORM_MAX_PATH))
-		g_equipment[g_equipmentCount][EquipmentPhysicsModelPath][0] = '\0';
+	new Handle:position = json_object_get(json, "position");
 
-	new Handle:team = INVALID_HANDLE;
-	if (JSONGetArray(json, "team", team) && team != INVALID_HANDLE)
-		for (new i = 0; i < GetArraySize(team); i++)
-			if (!JSONGetArrayInteger(team, i, g_equipment[g_equipmentCount][EquipmentTeam][i]))
-				g_equipment[g_equipmentCount][EquipmentTeam][i] = 0;
+	//PrintToServer("Loading: %s", g_equipment[g_equipmentCount][EquipmentModelPath]);
 
-	if (!JSONGetFloat(json, "scale", g_equipment[g_equipmentCount][EquipmentScale]))
-		g_equipment[g_equipmentCount][EquipmentScale] = 0.0;
+	for (new i = 0; i <= 2; i++)
+		g_equipment[g_equipmentCount][EquipmentPosition][i] = json_array_get_float(position, i);
 
-	new Handle:position = INVALID_HANDLE;
-	if (JSONGetArray(json, "position", position) && position != INVALID_HANDLE)
-		for (new i = 0; i <= 2; i++)
-			if (!JSONGetArrayFloat(position, i, g_equipment[g_equipmentCount][EquipmentPosition][i]))
-				g_equipment[g_equipmentCount][EquipmentPosition][i] = 0.0;
+	CloseHandle(position);
 
-	new Handle:angles = INVALID_HANDLE;
-	if (JSONGetArray(json, "angles", angles) && angles != INVALID_HANDLE)
-		for (new i = 0; i <= 2; i++)
-			if (!JSONGetArrayFloat(angles, i, g_equipment[g_equipmentCount][EquipmentAngles][i]))
-				g_equipment[g_equipmentCount][EquipmentAngles][i] = 0.0;
+	new Handle:angles = json_object_get(json, "angles");
 
-	if (strcmp(g_equipment[g_equipmentCount][EquipmentModelPath], "") != 0 && 
-		(FileExists(g_equipment[g_equipmentCount][EquipmentModelPath]) || FileExists(g_equipment[g_equipmentCount][EquipmentModelPath], true)))
+	for (new i = 0; i <= 2; i++)
+		g_equipment[g_equipmentCount][EquipmentAngles][i] = json_array_get_float(angles, i);
+
+	CloseHandle(angles);
+
+	if (strcmp(g_equipment[g_equipmentCount][EquipmentModelPath], "") != 0 && (FileExists(g_equipment[g_equipmentCount][EquipmentModelPath]) || FileExists(g_equipment[g_equipmentCount][EquipmentModelPath], true)))
 	{
 		PrecacheModel(g_equipment[g_equipmentCount][EquipmentModelPath]);
 		Downloader_AddFileToDownloadsTable(g_equipment[g_equipmentCount][EquipmentModelPath]);
 	}
 
-	new Handle:playermodels = INVALID_HANDLE;
-	if (JSONGetArray(json, "playermodels", playermodels) && playermodels != INVALID_HANDLE)
+	new Handle:playerModels = json_object_get(json, "playermodels");
+
+	if (playerModels != INVALID_HANDLE && json_typeof(playerModels) == JSON_ARRAY)
 	{
-		new size = GetArraySize(playermodels);
-		for (new i = 0; i < size; i++)
+		for (new index = 0, size = json_array_size(playerModels); index < size; index++)
 		{
-			new Handle:model = INVALID_HANDLE;
-			if (JSONGetArrayObject(playermodels, i, model) && model != INVALID_HANDLE)
+			new Handle:playerModel = json_array_get(playerModels, index);
+
+			if (playerModel == INVALID_HANDLE)
+				continue;
+
+			if (json_typeof(playerModel) != JSON_OBJECT)
 			{
-				if (!JSONGetString(model, "playermodel", g_playerModels[g_playerModelCount][PlayerModelPath], PLATFORM_MAX_PATH))
-				{
-					Store_LogWarning("Item '%s' does not contain a playermodel path at index %d", itemName, i);
-					continue;
-				}
-				new bool:haspositionorangle = false;
-
-				new Handle:modelposition = INVALID_HANDLE;
-				if (JSONGetArray(model, "position", modelposition) && modelposition != INVALID_HANDLE)
-				{
-					haspositionorangle = true;
-					for (new n = 0; n <= 2; n++)
-						if (!JSONGetArrayFloat(modelposition, n, g_playerModels[g_playerModelCount][Position][n]))
-							g_playerModels[g_playerModelCount][Position][n] = 0.0;
-				}
-				new Handle:modelangle = INVALID_HANDLE;
-				if (JSONGetArray(model, "angles", modelangle) && modelangle != INVALID_HANDLE)
-				{
-					haspositionorangle = true;
-					for (new n = 0; n <= 2; n++)
-						if (!JSONGetArrayFloat(modelangle, n, g_playerModels[g_playerModelCount][Angles][n]))
-							g_playerModels[g_playerModelCount][Angles][n] = 0.0;
-				}
-
-				if (haspositionorangle) 
-				{
-					strcopy(g_playerModels[g_playerModelCount][EquipmentName], STORE_MAX_NAME_LENGTH, itemName);
-					g_playerModelCount++;
-				}
+				CloseHandle(playerModel);
+				continue;
 			}
+
+			json_object_get_string(playerModel, "playermodel", g_playerModels[g_playerModelCount][PlayerModelPath], PLATFORM_MAX_PATH);
+
+			new Handle:playerModelPosition = json_object_get(playerModel, "position");
+
+			for (new i = 0; i <= 2; i++)
+				g_playerModels[g_playerModelCount][Position][i] = json_array_get_float(playerModelPosition, i);
+
+			CloseHandle(playerModelPosition);
+
+			new Handle:playerModelAngles = json_object_get(playerModel, "angles");
+
+			for (new i = 0; i <= 2; i++)
+				g_playerModels[g_playerModelCount][Angles][i] = json_array_get_float(playerModelAngles, i);
+
+			strcopy(g_playerModels[g_playerModelCount][EquipmentName], STORE_MAX_NAME_LENGTH, itemName);
+
+			CloseHandle(playerModelAngles);
+			CloseHandle(playerModel);
+
+			g_playerModelCount++;
 		}
+
+		CloseHandle(playerModels);
 	}
 
-	// todo: 'beautified' json causes an error invalid handle when calling DestroyJSON (fine when compacted, parser or impl error?)
-	DestroyJSON(json);
+	CloseHandle(json);
 
 	PrintToServer("Finished loading %s", itemName);
 
@@ -403,7 +421,7 @@ public OnGetPlayerEquipment(ids[], count, any:serial)
 	
 	if (!IsPlayerAlive(client))
 		return;
-
+		
 	for (new index = 0; index < count; index++)
 	{
 		decl String:itemName[STORE_MAX_NAME_LENGTH];
@@ -524,7 +542,7 @@ SetEntityVectors(source, ent, equipment)
 	{
 		ang[0] += g_playerModels[playerModel][Angles][0];
 		ang[1] += g_playerModels[playerModel][Angles][1];
-		ang[2] += g_playerModels[playerModel][Angles][2];
+		ang[2] += g_playerModels[playerModel][Angles][2];		
 	}
 
 	new Float:fOffset[3];
@@ -533,13 +551,13 @@ SetEntityVectors(source, ent, equipment)
 	{
 		fOffset[0] = g_equipment[equipment][EquipmentPosition][0];
 		fOffset[1] = g_equipment[equipment][EquipmentPosition][1];
-		fOffset[2] = g_equipment[equipment][EquipmentPosition][2];
+		fOffset[2] = g_equipment[equipment][EquipmentPosition][2];	
 	}
 	else
 	{
 		fOffset[0] = g_playerModels[playerModel][Position][0];
 		fOffset[1] = g_playerModels[playerModel][Position][1];
-		fOffset[2] = g_playerModels[playerModel][Position][2];
+		fOffset[2] = g_playerModels[playerModel][Position][2];		
 	}
 
 	GetAngleVectors(ang, fForward, fRight, fUp);
@@ -818,7 +836,7 @@ public Action:Command_OpenEditor(client, args)
 {
 	if (args < 1)
 	{
-		ReplyToCommand(client, "%sUsage: store_editor <name>", STORE_PREFIX);
+		ReplyToCommand(client, "%sUsage: sm_editor <name>", STORE_PREFIX);
 		return Plugin_Handled;
 	}
 
@@ -1087,42 +1105,35 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 	}
 }
 
-// todo: untested with native json parsing
 Editor_SavePlayerModelAttributes(client, equipment)
-{	
-	new Handle:json = CreateJSON();
-	JSONSetString(json, "model",      g_equipment[equipment][EquipmentModelPath]);
-	JSONSetArray(json,  "position",   Editor_CreateDynamicVectorArray(g_equipment[equipment][EquipmentPosition]));
-	JSONSetArray(json,  "angles",     Editor_CreateDynamicVectorArray(g_equipment[equipment][EquipmentAngles]));
-	JSONSetString(json, "attachment", g_equipment[equipment][EquipmentAttachment]);
+{        
+        new Handle:json = json_object();
+        json_object_set_new(json, "model", json_string(g_equipment[equipment][EquipmentModelPath]));
+        Editor_AppendJSONVector(json, "position", g_equipment[equipment][EquipmentPosition]);
+        Editor_AppendJSONVector(json, "angles", g_equipment[equipment][EquipmentAngles]);
+        json_object_set_new(json, "attachment", json_string(g_equipment[equipment][EquipmentAttachment]));
 
-	if (g_playerModelCount > 0) 
-	{
-		new Handle:playerModels = CreateArray(1);
-		for (new j = 0; j < g_playerModelCount; j++)
-		{
-			if (!StrEqual(g_equipment[equipment][EquipmentName], g_playerModels[j][EquipmentName]))
-				continue;
+        new Handle:playerModels = json_array();
 
-			new Handle:model = CreateTrie();
-			JSONSetString(model, "playermodel", g_playerModels[j][PlayerModelPath]);
-			JSONSetArray(model,  "position"   , Editor_CreateDynamicVectorArray(g_playerModels[j][Position]));
-			JSONSetArray(model,  "angles",      Editor_CreateDynamicVectorArray(g_playerModels[j][Angles]));
+        for (new j = 0; j < g_playerModelCount; j++)
+        {        
+                if (!StrEqual(g_equipment[equipment][EquipmentName], g_playerModels[j][EquipmentName]))
+                        continue;
 
-			PushArrayCell(playerModels, JSONCreateObject(model));
-		}
+                Editor_AppendJSONPlayerModel(playerModels, 
+                        g_playerModels[j][PlayerModelPath], 
+                        g_playerModels[j][Position], 
+                        g_playerModels[j][Angles]);
+        }
 
-		JSONSetArray(json, "playermodels", playerModels);
-	}
+        json_object_set_new(json, "playermodels", playerModels);
 
-	new String:sJSON[10 * 1024];
+        new String:sJSON[10 * 1024];
+        json_dump(json, sJSON, sizeof(sJSON));        
 
-	// Beautify is disable for now, as EasyJSON freaks out when decoding it again.
-	EncodeJSON(json, sJSON, sizeof(sJSON), false);
+        CloseHandle(json);
 
-	CloseHandle(json);
-
-	Store_WriteItemAttributes(g_equipment[equipment][EquipmentName], sJSON, Editor_OnSave, client);
+        Store_WriteItemAttributes(g_equipment[equipment][EquipmentName], sJSON, Editor_OnSave, client);
 }
 
 public Editor_OnSave(bool:success, any:client)
@@ -1140,13 +1151,22 @@ public Store_OnReloadItemsPost()
 	}
 }
 
-Handle:Editor_CreateDynamicVectorArray(Float:vector[])
+Editor_AppendJSONVector(Handle:json, const String:key[], Float:vector[])
 {
-	new Handle:array = CreateArray(1, 3);
+	new Handle:array = json_array();
 
-	for (new i = 0; i < 3; i++) {
-		SetArrayCell(array, i, JSONCreateFloat(vector[i]));
-	}
+	for (new i = 0; i < 3; i++)
+		json_array_append_new(array, json_real(vector[i]));
 
-	return array;
+	json_object_set_new(json, key, array);		
+}
+
+Editor_AppendJSONPlayerModel(Handle:json, const String:modelPath[], Float:position[], Float:angles[])
+{
+	new Handle:playerModel = json_object();
+	json_object_set_new(playerModel, "playermodel", json_string(modelPath));
+	Editor_AppendJSONVector(playerModel, "position", position);
+	Editor_AppendJSONVector(playerModel, "angles", angles);
+
+	json_array_append_new(json, playerModel);
 }
