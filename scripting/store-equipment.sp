@@ -28,8 +28,11 @@ enum EquipmentPlayerModelSettings
 	String:EquipmentName[STORE_MAX_NAME_LENGTH],
 	String:PlayerModelPath[PLATFORM_MAX_PATH],
 	Float:Position[3],
-	Float:Angles[3]
+	Float:Angles[3],
 }
+
+// ConVar Handles
+new Handle:g_editor_showNegativeValues = INVALID_HANDLE;
 
 new Handle:g_hLookupAttachment = INVALID_HANDLE;
 
@@ -110,6 +113,15 @@ public OnPluginStart()
 
 	RegAdminCmd("store_editor", Command_OpenEditor, ADMFLAG_RCON, "Opens store-equipment editor.");
 	RegAdminCmd("store_hideownitems", Command_HideOwnItems, ADMFLAG_RCON, "Toggles hiding own items for debugging.");
+
+	// ConVars
+	g_editor_showNegativeValues = CreateConVar(
+		"store_editor_shownegativevalues",
+		"0",
+		"Whether to show negative menu items for positioning items or not.\nYou don't need them because you can just press the shift button",
+		FCVAR_PLUGIN,
+		true, 0.0, true, 1.0
+	);
 
 	Store_RegisterItemType("equipment", OnEquip, LoadItem);
 }
@@ -933,17 +945,25 @@ public Editor_LoadoutSlotSelectHandle(Handle:menu, MenuAction:action, client, sl
 Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, menuSelectionPosition = 0, Float:amount = 0.5)
 {
 	new Handle:menu = CreateMenu(Editor_ActionSelectHandle);
-	SetMenuTitle(menu, "Select action:");
+	SetMenuTitle(menu, "Select action:   Press +speed (Shift) for\nnegative values and +duck (CTRL) for +- 5.0");
+
+	//AddMenuItem(menu, "", "", ITEMDRAW_DISABLED);
 
 	for (new axis = 'x'; axis <= 'z'; axis++)
 	{
-		Editor_AddMenuItem(menu, target, "position", loadoutSlot, axis, false, amount);
+		if (GetConVarBool(g_editor_showNegativeValues))
+		{
+			Editor_AddMenuItem(menu, target, "position", loadoutSlot, axis, false, amount);
+		}
 		Editor_AddMenuItem(menu, target, "position", loadoutSlot, axis, true,  amount);
 	}
 
 	for (new axis = 'x'; axis <= 'z'; axis++)
 	{
-		Editor_AddMenuItem(menu, target, "angles",   loadoutSlot, axis, false, amount);
+		if (GetConVarBool(g_editor_showNegativeValues))
+		{
+			Editor_AddMenuItem(menu, target, "angles",   loadoutSlot, axis, false, amount);
+		}
 		Editor_AddMenuItem(menu, target, "angles",   loadoutSlot, axis, true,  amount);
 	}
 
@@ -1003,6 +1023,20 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 
 			new axis = values[3][0];
 			new bool:add = bool:StringToInt(values[4]);
+			new clientButtons = GetClientButtons(client);
+
+			if (clientButtons & IN_SPEED)
+			{
+				// Negate the units in any case when the sprint
+				// button is pressed.
+				add = false;
+			}
+
+			new Float:scaleUnits = 0.5;
+			if (clientButtons & IN_DUCK)
+			{
+				scaleUnits = 5.0;
+			}
 
 			new equipment = GetEquipmentIndexFromName(g_sCurrentEquipment[target][loadoutSlot]);
 			if (equipment < 0)
@@ -1048,23 +1082,23 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 				if (axis == 'x')
 				{
 					if (add)
-						g_playerModels[playerModel][Angles][0] += 0.5;
+						g_playerModels[playerModel][Angles][0] += scaleUnits;
 					else
-						g_playerModels[playerModel][Angles][0] -= 0.5;
+						g_playerModels[playerModel][Angles][0] -= scaleUnits;
 				}
 				else if (axis == 'y')
 				{
 					if (add)
-						g_playerModels[playerModel][Angles][1] += 0.5;
+						g_playerModels[playerModel][Angles][1] += scaleUnits;
 					else
-						g_playerModels[playerModel][Angles][1] -= 0.5;
+						g_playerModels[playerModel][Angles][1] -= scaleUnits;
 				} 
 				else if (axis == 'z')
 				{
 					if (add)
-						g_playerModels[playerModel][Angles][2] += 0.5;
+						g_playerModels[playerModel][Angles][2] += scaleUnits;
 					else
-						g_playerModels[playerModel][Angles][2] -= 0.5;
+						g_playerModels[playerModel][Angles][2] -= scaleUnits;
 				}
 
 				Equip(target, loadoutSlot, g_sCurrentEquipment[target][loadoutSlot]);
@@ -1075,23 +1109,23 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 				if (axis == 'x')
 				{
 					if (add)
-						g_playerModels[playerModel][Position][0] += 0.5;
+						g_playerModels[playerModel][Position][0] += scaleUnits;
 					else
-						g_playerModels[playerModel][Position][0] -= 0.5;
+						g_playerModels[playerModel][Position][0] -= scaleUnits;
 				}
 				else if (axis == 'y')
 				{
 					if (add)
-						g_playerModels[playerModel][Position][1] += 0.5;
+						g_playerModels[playerModel][Position][1] += scaleUnits;
 					else
-						g_playerModels[playerModel][Position][1] -= 0.5;
+						g_playerModels[playerModel][Position][1] -= scaleUnits;
 				} 
 				else if (axis == 'z')
 				{
 					if (add)
-						g_playerModels[playerModel][Position][2] += 0.5;
+						g_playerModels[playerModel][Position][2] += scaleUnits;
 					else
-						g_playerModels[playerModel][Position][2] -= 0.5;
+						g_playerModels[playerModel][Position][2] -= scaleUnits;
 				}
 
 				Equip(target, loadoutSlot, g_sCurrentEquipment[target][loadoutSlot]);
