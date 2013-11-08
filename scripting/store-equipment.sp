@@ -6,6 +6,7 @@
 #include <smartdm>
 #include <store>
 #include <smjansson>
+#include <smlib>
 
 #undef REQUIRE_PLUGIN
 #include <ToggleEffects>
@@ -29,9 +30,11 @@ enum EquipmentPlayerModelSettings
 	String:PlayerModelPath[PLATFORM_MAX_PATH],
 	Float:Position[3],
 	Float:Angles[3],
+	currentlyLockedByClient
 }
 
 // ConVar Handles
+new Handle:g_editor_showOwnItems       = INVALID_HANDLE;
 new Handle:g_editor_showNegativeValues = INVALID_HANDLE;
 
 new Handle:g_hLookupAttachment = INVALID_HANDLE;
@@ -44,6 +47,8 @@ new g_equipmentCount = 0;
 
 new Handle:g_equipmentNameIndex = INVALID_HANDLE;
 new Handle:g_loadoutSlotList = INVALID_HANDLE;
+new lastLoadOutSlotSelected[MAXPLAYERS + 1];
+new lastTargetSelected[MAXPLAYERS + 1];
 
 new g_playerModels[1024][EquipmentPlayerModelSettings];
 new g_playerModelCount = 0;
@@ -51,14 +56,13 @@ new g_playerModelCount = 0;
 new String:g_sCurrentEquipment[MAXPLAYERS+1][32][STORE_MAX_NAME_LENGTH];
 new g_iEquipment[MAXPLAYERS+1][32];
 
-new bool:g_bRestartGame = false;
-
 new String:g_default_physics_model[PLATFORM_MAX_PATH];
 
 new g_player_death_equipment_effect;
 new String:g_player_death_dissolve_type[2]; // leave this as a string as it's used in DispatchKeyValue(cell, string, *string*)
 
-new bool:g_bHideOwnItems = true;
+new bool:g_bShowOwnItems = false;
+new bool:g_bShowOwnItemsClients[MAXPLAYERS + 1] = { false, ... };
 
 /**
  * Called before plugin is loaded.
@@ -112,9 +116,10 @@ public OnPluginStart()
 	g_hLookupAttachment = EndPrepSDKCall();	
 
 	RegAdminCmd("store_editor", Command_OpenEditor, ADMFLAG_RCON, "Opens store-equipment editor.");
-	RegAdminCmd("store_hideownitems", Command_HideOwnItems, ADMFLAG_RCON, "Toggles hiding own items for debugging.");
 
 	// ConVars
+	g_editor_showOwnItems = CreateConVar("store_showownitems", "0.0", "Toggles hiding own items for all players for debugging.", FCVAR_PLUGIN);
+	HookConVarChange(g_editor_showOwnItems, ConVarChanged_ShowOnItem);
 	g_editor_showNegativeValues = CreateConVar(
 		"store_editor_shownegativevalues",
 		"0",
@@ -192,6 +197,16 @@ public OnLibraryRemoved(const String:name[])
 	{
 		g_bZombieReloaded = false;
 	}
+}
+
+public OnClientConnected(client)
+{
+	for (new i = 0; i < g_playerModelCount; i++)
+	{
+		g_playerModels[i][currentlyLockedByClient] = client;
+	}
+
+	g_bShowOwnItemsClients[client] = false;
 }
 
 public OnClientDisconnect(client)
@@ -404,6 +419,8 @@ public LoadItem(const String:itemName[], const String:attrs[])
 				g_playerModels[g_playerModelCount][Angles][i] = json_array_get_float(playerModelAngles, i);
 
 			strcopy(g_playerModels[g_playerModelCount][EquipmentName], STORE_MAX_NAME_LENGTH, itemName);
+
+			g_playerModels[g_playerModelCount][currentlyLockedByClient] = -1;
 
 			CloseHandle(playerModelAngles);
 			CloseHandle(playerModel);
@@ -798,7 +815,7 @@ UnequipAll(client, bool:destroy=true)
 public Action:ShouldHide(ent, client)
 {
 	// if not hiding any own items, just show them all
-	if (!g_bHideOwnItems)
+	if (g_bShowOwnItemsClients[client] || g_bShowOwnItems)
 		return Plugin_Continue;
 
 	// hide all items for the client if they have the toggle special fx cookie set
@@ -837,11 +854,9 @@ stock bool:LookupAttachment(client, String:point[])
 	return SDKCall(g_hLookupAttachment, client, point);
 }
 
-public Action:Command_HideOwnItems(client, args)
+public ConVarChanged_ShowOnItem(Handle:convar, const String:oldValue[], const String:newValue[])
 {
-	g_bHideOwnItems = !g_bHideOwnItems;
-	ReplyToCommand(client, "%sHiding own items: %i", STORE_PREFIX, g_bHideOwnItems);
-	return Plugin_Handled;
+	g_bShowOwnItems = bool:StringToInt(newValue);
 }
 
 public Action:Command_OpenEditor(client, args)
@@ -915,7 +930,14 @@ public Editor_LoadoutSlotSelectHandle(Handle:menu, MenuAction:action, client, sl
 			new String:values[2][16];
 			ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
 
-			Editor_OpenLoadoutSlotMenu(client, StringToInt(values[0]), StringToInt(values[1]));
+			new target      = StringToInt(values[0]);
+			new loadoutSlot = StringToInt(values[1]);
+			
+			lastTargetSelected[client]      = target;
+			lastLoadOutSlotSelected[client] = loadoutSlot;
+
+			Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);
+			Editor_OnClientStartedEditing(client, target, loadoutSlot);
 		}
 	}
 	else if (action == MenuAction_End)
@@ -1003,17 +1025,20 @@ Editor_AddMenuItem(Handle:menu, target, const String:actionType[], loadoutSlot, 
 	AddMenuItem(menu, value, text);
 }
 
-public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
+public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, param1, param2)
 {
+	// For most actions param1 is client, but not for all
+	new client = param1;
+
 	if (action == MenuAction_Select)
 	{
+		new slot   = param2;
+
 		new String:value[128];
 		if (GetMenuItem(menu, slot, value, sizeof(value)))
 		{
 			new String:values[5][32];
 			ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
-			
-			//PrintToChatAll(values[0]); // debug msg :-)
 
 			new target = StringToInt(values[1]);
 			new loadoutSlot = StringToInt(values[2]);
@@ -1045,18 +1070,7 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 				return;
 			}
 
-			new playerModel = -1;
-			for (new j = 0; j < g_playerModelCount; j++)
-			{	
-				if (!StrEqual(g_sCurrentEquipment[target][loadoutSlot], g_playerModels[j][EquipmentName]))
-					continue;
-
-				if (!StrEqual(modelPath, g_playerModels[j][PlayerModelPath], false))
-					continue;
-
-				playerModel = j;
-				break;
-			}
+			new playerModel = GetCurrentPlayerModelByLoadoutSlot(client, loadoutSlot);
 
 			if (playerModel == -1)
 			{
@@ -1075,63 +1089,69 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 
 			if (StrEqual(values[0], "save"))
 			{
+				Editor_OnClientStoppedEditing(client, target, lastLoadOutSlotSelected[client]);
 				Editor_SavePlayerModelAttributes(client, equipment);
-			}
-			else if(StrEqual(values[0], "angles"))
-			{
-				if (axis == 'x')
-				{
-					if (add)
-						g_playerModels[playerModel][Angles][0] += scaleUnits;
-					else
-						g_playerModels[playerModel][Angles][0] -= scaleUnits;
-				}
-				else if (axis == 'y')
-				{
-					if (add)
-						g_playerModels[playerModel][Angles][1] += scaleUnits;
-					else
-						g_playerModels[playerModel][Angles][1] -= scaleUnits;
-				} 
-				else if (axis == 'z')
-				{
-					if (add)
-						g_playerModels[playerModel][Angles][2] += scaleUnits;
-					else
-						g_playerModels[playerModel][Angles][2] -= scaleUnits;
-				}
-
-				Equip(target, loadoutSlot, g_sCurrentEquipment[target][loadoutSlot]);
-				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, GetMenuSelectionPosition());				
 			}
 			else
 			{
-				if (axis == 'x')
-				{
-					if (add)
-						g_playerModels[playerModel][Position][0] += scaleUnits;
-					else
-						g_playerModels[playerModel][Position][0] -= scaleUnits;
+				if (StrEqual(values[0], "angles")) {
+					if (axis == 'x')
+					{
+						if (add)
+							g_playerModels[playerModel][Angles][0] += scaleUnits;
+						else
+							g_playerModels[playerModel][Angles][0] -= scaleUnits;
+					}
+					else if (axis == 'y')
+					{
+						if (add)
+							g_playerModels[playerModel][Angles][1] += scaleUnits;
+						else
+							g_playerModels[playerModel][Angles][1] -= scaleUnits;
+					} 
+					else if (axis == 'z')
+					{
+						if (add)
+							g_playerModels[playerModel][Angles][2] += scaleUnits;
+						else
+							g_playerModels[playerModel][Angles][2] -= scaleUnits;
+					}
 				}
-				else if (axis == 'y')
+				else
 				{
-					if (add)
-						g_playerModels[playerModel][Position][1] += scaleUnits;
-					else
-						g_playerModels[playerModel][Position][1] -= scaleUnits;
-				} 
-				else if (axis == 'z')
-				{
-					if (add)
-						g_playerModels[playerModel][Position][2] += scaleUnits;
-					else
-						g_playerModels[playerModel][Position][2] -= scaleUnits;
+					if (axis == 'x')
+					{
+						if (add)
+							g_playerModels[playerModel][Position][0] += scaleUnits;
+						else
+							g_playerModels[playerModel][Position][0] -= scaleUnits;
+					}
+					else if (axis == 'y')
+					{
+						if (add)
+							g_playerModels[playerModel][Position][1] += scaleUnits;
+						else
+							g_playerModels[playerModel][Position][1] -= scaleUnits;
+					} 
+					else if (axis == 'z')
+					{
+						if (add)
+							g_playerModels[playerModel][Position][2] += scaleUnits;
+						else
+							g_playerModels[playerModel][Position][2] -= scaleUnits;
+					}
 				}
 
 				Equip(target, loadoutSlot, g_sCurrentEquipment[target][loadoutSlot]);
-				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, GetMenuSelectionPosition());				
+				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, GetMenuSelectionPosition());
+
+				// Call this again in case round restarted or something
+				Editor_OnClientStartedEditing(client, target, loadoutSlot);
 			}
 		}
+	}
+	else if (action == MenuAction_Cancel) {
+		Editor_OnClientStoppedEditing(client, lastTargetSelected[client], lastLoadOutSlotSelected[client]);
 	}
 	else if (action == MenuAction_End)
 	{
@@ -1139,8 +1159,55 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 	}
 }
 
+GetCurrentPlayerModelByLoadoutSlot(target, loadoutSlot)
+{
+	decl String:modelPath[PLATFORM_MAX_PATH];
+	GetClientModel(target, modelPath, sizeof(modelPath));
+
+	new playerModel = -1;
+	for (new j = 0; j < g_playerModelCount; j++)
+	{	
+		if (!StrEqual(g_sCurrentEquipment[target][loadoutSlot], g_playerModels[j][EquipmentName]))
+			continue;
+
+		if (!StrEqual(modelPath, g_playerModels[j][PlayerModelPath], false))
+			continue;
+
+		playerModel = j;
+		break;
+	}
+
+	return playerModel;
+}
+
+Editor_OnClientStartedEditing(client, target, loadoutSlot)
+{
+	new playerModel = GetCurrentPlayerModelByLoadoutSlot(target, loadoutSlot);
+	if (playerModel != -1) {
+		g_playerModels[playerModel][currentlyLockedByClient] = client;
+	}
+
+	if (client == target) {
+		g_bShowOwnItemsClients[client] = true;
+		Client_SetThirdPersonMode(client, true);
+	}
+}
+
+stock Editor_OnClientStoppedEditing(client, target, loadoutSlot)
+{
+	new playerModel = GetCurrentPlayerModelByLoadoutSlot(target, loadoutSlot);
+	if (playerModel != -1) {
+		g_playerModels[playerModel][currentlyLockedByClient] = -1;
+	}
+
+	if (client == target) {
+		g_bShowOwnItemsClients[client] = false;
+		Client_SetThirdPersonMode(client, false);
+	}
+}
+
 Editor_SavePlayerModelAttributes(client, equipment)
-{        
+{
         new Handle:json = json_object();
         json_object_set_new(json, "model", json_string(g_equipment[equipment][EquipmentModelPath]));
         Editor_AppendJSONVector(json, "position", g_equipment[equipment][EquipmentPosition]);
@@ -1173,16 +1240,18 @@ Editor_SavePlayerModelAttributes(client, equipment)
 public Editor_OnSave(bool:success, any:client)
 {
 	PrintToChat(client, "%sSave successful.", STORE_PREFIX);
-	g_bRestartGame = true;
-	Store_ReloadItemCache();
-}
 
-public Store_OnReloadItemsPost()
-{
-	if (g_bRestartGame)
+	for (new i = 0; i < g_playerModelCount; i++)
 	{
-		g_bRestartGame = false;
+		if (g_playerModels[i][currentlyLockedByClient] > 0 /*&& g_playerModels[i][currentlyLockedByClient] != client*/)
+		{
+			PrintToChat(client, "%sWarning: Not reloading items because player model of equipment \"%s\" is currently in process by \"%N\"",
+				STORE_PREFIX, g_playerModels[i][EquipmentName], g_playerModels[i][currentlyLockedByClient]);
+			return;
+		}
 	}
+
+	Store_ReloadItemCache();
 }
 
 Editor_AppendJSONVector(Handle:json, const String:key[], Float:vector[])
