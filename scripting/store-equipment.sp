@@ -861,42 +861,40 @@ public ConVarChanged_ShowOnItem(Handle:convar, const String:oldValue[], const St
 
 public Action:Command_OpenEditor(client, args)
 {
-	if (args < 1)
+	if (client == 0)
 	{
-		ReplyToCommand(client, "%sUsage: sm_editor <name>", STORE_PREFIX);
+		ReplyToCommand(client, "%sError: this command hast be executed by a player ingame.", STORE_PREFIX);
 		return Plugin_Handled;
 	}
 
 	decl String:target[65];
 	decl String:target_name[MAX_TARGET_LENGTH];
-	decl target_list[MAXPLAYERS];
+	decl target_list[1];
 	decl target_count;
 	decl bool:tn_is_ml;
-    
-	GetCmdArg(1, target, sizeof(target));
-     
-	if ((target_count = ProcessTargetString(
-			target,
-			0,
-			target_list,
-			MAXPLAYERS,
-			0,
-			target_name,
-			sizeof(target_name),
-			tn_is_ml)) <= 0)
-	{
-		ReplyToTargetError(client, target_count);
-		return Plugin_Handled;
-	}
 
-	for (new i = 0; i < target_count; i++)
-	{
-		if (IsClientInGame(target_list[i]) && !IsFakeClient(target_list[i]))
+	if (args == 0) {
+		target_list[0] = client;
+	}
+	else {
+		GetCmdArg(1, target, sizeof(target));
+		 
+		if ((target_count = ProcessTargetString(
+				target,
+				0,
+				target_list,
+				sizeof(target_list),
+				COMMAND_FILTER_NO_MULTI | COMMAND_FILTER_NO_BOTS,
+				target_name,
+				sizeof(target_name),
+				tn_is_ml)) <= 0)
 		{
-			OpenEditor(client, target_list[0]);
-			break;
+			ReplyToTargetError(client, target_count);
+			return Plugin_Handled;
 		}
 	}
+
+	OpenEditor(client, target_list[0]);
 
 	return Plugin_Handled;
 }
