@@ -217,7 +217,7 @@ public OnClientConnected(client)
 {
 	for (new i = 0; i < g_playerModelCount; i++)
 	{
-		g_playerModels[i][currentlyLockedByClient] = client;
+		g_playerModels[i][currentlyLockedByClient] = 0;
 	}
 
 	g_bShowOwnItemsClients[client] = false;
@@ -1257,7 +1257,7 @@ public Editor_OnSave(bool:success, any:client)
 	{
 		if (g_playerModels[i][currentlyLockedByClient] > 0 /*&& g_playerModels[i][currentlyLockedByClient] != client*/)
 		{
-			PrintToChat(client, "%sWarning: Not reloading items because player model of equipment \"%s\" is currently in process by \"%N\"",
+			PrintToChat(client, "%sWarning: Not reloading items because player model of equipment \"%s\" is currently in process by \"%N\". You can force reload however.",
 				STORE_PREFIX, g_playerModels[i][EquipmentName], g_playerModels[i][currentlyLockedByClient]);
 			return;
 		}
