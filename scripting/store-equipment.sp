@@ -64,6 +64,8 @@ new String:g_player_death_dissolve_type[2]; // leave this as a string as it's us
 new bool:g_bShowOwnItems = false;
 new bool:g_bShowOwnItemsClients[MAXPLAYERS + 1] = { false, ... };
 
+new clientsPressStoreEditorBigchange[MAXPLAYERS + 1 ] = {false, ... };
+
 /**
  * Called before plugin is loaded.
  * 
@@ -116,6 +118,8 @@ public OnPluginStart()
 	g_hLookupAttachment = EndPrepSDKCall();	
 
 	RegAdminCmd("store_editor", Command_OpenEditor, ADMFLAG_RCON, "Opens store-equipment editor.");
+	RegConsoleCmd("+store_editor_bigchange", Command_StoreEditorBigChangeStart);
+	RegConsoleCmd("-store_editor_bigchange", Command_StoreEditorBigChangeStop);
 
 	// ConVars
 	g_editor_showOwnItems = CreateConVar("store_showownitems", "0.0", "Toggles hiding own items for all players for debugging.", FCVAR_PLUGIN);
@@ -129,6 +133,16 @@ public OnPluginStart()
 	);
 
 	Store_RegisterItemType("equipment", OnEquip, LoadItem);
+}
+
+public Action:Command_StoreEditorBigChangeStart(client, args)
+{
+	clientsPressStoreEditorBigchange[client] = true;
+}
+
+public Action:Command_StoreEditorBigChangeStop(client, args)
+{
+	clientsPressStoreEditorBigchange[client] = false;
 }
 
 public OnAllPluginsLoaded()
@@ -207,6 +221,7 @@ public OnClientConnected(client)
 	}
 
 	g_bShowOwnItemsClients[client] = false;
+	clientsPressStoreEditorBigchange[client] = false;
 }
 
 public OnClientDisconnect(client)
@@ -965,7 +980,7 @@ public Editor_LoadoutSlotSelectHandle(Handle:menu, MenuAction:action, client, sl
 Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, menuSelectionPosition = 0, Float:amount = 0.5)
 {
 	new Handle:menu = CreateMenu(Editor_ActionSelectHandle);
-	SetMenuTitle(menu, "Select action:   Press +speed (Shift) for\nnegative values and +duck (CTRL) for +- 5.0");
+	SetMenuTitle(menu, "Select action:   Press +speed (Shift) for\nnegative values and +store_editor_bigchange (custom) for +- 5.0");
 
 	//AddMenuItem(menu, "", "", ITEMDRAW_DISABLED);
 
@@ -1046,9 +1061,8 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, param1, param2)
 
 			new axis = values[3][0];
 			new bool:add = bool:StringToInt(values[4]);
-			new clientButtons = GetClientButtons(client);
 
-			if (clientButtons & IN_SPEED)
+			if (GetClientButtons(client) & IN_SPEED)
 			{
 				// Negate the units in any case when the sprint
 				// button is pressed.
@@ -1056,7 +1070,7 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, param1, param2)
 			}
 
 			new Float:scaleUnits = 0.5;
-			if (clientButtons & IN_DUCK)
+			if (clientsPressStoreEditorBigchange[client])
 			{
 				scaleUnits = 5.0;
 			}
