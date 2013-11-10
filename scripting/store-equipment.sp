@@ -5,7 +5,8 @@
 #include <sdkhooks>
 #include <smartdm>
 #include <store>
-#include <EasyJSON>
+#include <smjansson>
+#include <smlib>
 
 #undef REQUIRE_PLUGIN
 #include <ToggleEffects>
@@ -28,8 +29,13 @@ enum EquipmentPlayerModelSettings
 	String:EquipmentName[STORE_MAX_NAME_LENGTH],
 	String:PlayerModelPath[PLATFORM_MAX_PATH],
 	Float:Position[3],
-	Float:Angles[3]
+	Float:Angles[3],
+	currentlyLockedByClient
 }
+
+// ConVar Handles
+new Handle:g_editor_showOwnItems       = INVALID_HANDLE;
+new Handle:g_editor_showNegativeValues = INVALID_HANDLE;
 
 new Handle:g_hLookupAttachment = INVALID_HANDLE;
 
@@ -41,6 +47,8 @@ new g_equipmentCount = 0;
 
 new Handle:g_equipmentNameIndex = INVALID_HANDLE;
 new Handle:g_loadoutSlotList = INVALID_HANDLE;
+new lastLoadOutSlotSelected[MAXPLAYERS + 1];
+new lastTargetSelected[MAXPLAYERS + 1];
 
 new g_playerModels[1024][EquipmentPlayerModelSettings];
 new g_playerModelCount = 0;
@@ -48,14 +56,15 @@ new g_playerModelCount = 0;
 new String:g_sCurrentEquipment[MAXPLAYERS+1][32][STORE_MAX_NAME_LENGTH];
 new g_iEquipment[MAXPLAYERS+1][32];
 
-new bool:g_bRestartGame = false;
-
 new String:g_default_physics_model[PLATFORM_MAX_PATH];
 
 new g_player_death_equipment_effect;
 new String:g_player_death_dissolve_type[2]; // leave this as a string as it's used in DispatchKeyValue(cell, string, *string*)
 
-new bool:g_bHideOwnItems = true;
+new bool:g_bShowOwnItems = false;
+new bool:g_bShowOwnItemsClients[MAXPLAYERS + 1] = { false, ... };
+
+new clientsPressStoreEditorBigchange[MAXPLAYERS + 1 ] = {false, ... };
 
 /**
  * Called before plugin is loaded.
@@ -109,9 +118,31 @@ public OnPluginStart()
 	g_hLookupAttachment = EndPrepSDKCall();	
 
 	RegAdminCmd("store_editor", Command_OpenEditor, ADMFLAG_RCON, "Opens store-equipment editor.");
-	RegAdminCmd("store_hideownitems", Command_HideOwnItems, ADMFLAG_RCON, "Toggles hiding own items for debugging.");
+	RegConsoleCmd("+store_editor_bigchange", Command_StoreEditorBigChangeStart);
+	RegConsoleCmd("-store_editor_bigchange", Command_StoreEditorBigChangeStop);
 
-	//Store_RegisterItemType("equipment", OnEquip, LoadItem);
+	// ConVars
+	g_editor_showOwnItems = CreateConVar("store_showownitems", "0.0", "Toggles hiding own items for all players for debugging.", FCVAR_PLUGIN);
+	HookConVarChange(g_editor_showOwnItems, ConVarChanged_ShowOnItem);
+	g_editor_showNegativeValues = CreateConVar(
+		"store_editor_shownegativevalues",
+		"0",
+		"Whether to show negative menu items for positioning items or not.\nYou don't need them because you can just press the shift button",
+		FCVAR_PLUGIN,
+		true, 0.0, true, 1.0
+	);
+
+	Store_RegisterItemType("equipment", OnEquip, LoadItem);
+}
+
+public Action:Command_StoreEditorBigChangeStart(client, args)
+{
+	clientsPressStoreEditorBigchange[client] = true;
+}
+
+public Action:Command_StoreEditorBigChangeStop(client, args)
+{
+	clientsPressStoreEditorBigchange[client] = false;
 }
 
 public OnAllPluginsLoaded()
@@ -180,6 +211,17 @@ public OnLibraryRemoved(const String:name[])
 	{
 		g_bZombieReloaded = false;
 	}
+}
+
+public OnClientConnected(client)
+{
+	for (new i = 0; i < g_playerModelCount; i++)
+	{
+		g_playerModels[i][currentlyLockedByClient] = 0;
+	}
+
+	g_bShowOwnItemsClients[client] = false;
+	clientsPressStoreEditorBigchange[client] = false;
 }
 
 public OnClientDisconnect(client)
@@ -285,106 +327,126 @@ public Store_OnReloadItems()
 	g_playerModelCount = 0;
 }
 
+json_object_get_string_default(Handle:hObj, const String:sKey[], String:sBuffer[], maxlength, String:sDefault[])
+{
+	new Handle:hElement = json_object_get(hObj, sKey);
+	if (hElement == INVALID_HANDLE)
+	{
+		strcopy(sBuffer, maxlength, sDefault);
+	}
+	else
+	{
+		if(json_is_string(hElement))
+		{
+			json_string_value(hElement, sBuffer, maxlength);
+		}
+		else
+		{
+			strcopy(sBuffer, maxlength, sDefault);
+		}
+		CloseHandle(hElement);
+	}
+}
+
 public LoadItem(const String:itemName[], const String:attrs[])
 {
-
-	PrintToServer("Loading item '%s'", itemName);
-
 	strcopy(g_equipment[g_equipmentCount][EquipmentName], STORE_MAX_NAME_LENGTH, itemName);
 
 	SetTrieValue(g_equipmentNameIndex, g_equipment[g_equipmentCount][EquipmentName], g_equipmentCount);
 
-	new Handle:json = DecodeJSON(attrs);
-	if (json == INVALID_HANDLE)
+	new Handle:json = json_load(attrs);
+	json_object_get_string(json, "model", g_equipment[g_equipmentCount][EquipmentModelPath], PLATFORM_MAX_PATH);
+	json_object_get_string(json, "attachment", g_equipment[g_equipmentCount][EquipmentAttachment], 32);
+	json_object_get_string_default(json, "physicsmodel", g_equipment[g_equipmentCount][EquipmentPhysicsModelPath], PLATFORM_MAX_PATH, "");
+
+	for (new i = 0; i < 10; i++)
 	{
-		Store_LogError("Error parsing item '%s' attrs,\n %s", itemName, attrs);
-		return;
+		g_equipment[g_equipmentCount][EquipmentTeam][i] = -1;
+	}
+	new Handle:team = json_object_get(json, "team");
+	if (team != INVALID_HANDLE)
+	{
+		new size = json_array_size(team);
+		if (size > 0)
+		{
+			for (new i = 0; i < size; i++)
+			{
+				g_equipment[g_equipmentCount][EquipmentTeam][i] = json_array_get_int(team, i);
+			}
+		}
+		CloseHandle(team);
 	}
 
-	if (!JSONGetString(json, "model", g_equipment[g_equipmentCount][EquipmentModelPath], PLATFORM_MAX_PATH))
-	{
-		Store_LogError("Item '%s' does not contain a model in json attributes", itemName);
-		return;
-	}
 
-	if (!JSONGetString(json, "attachment", g_equipment[g_equipmentCount][EquipmentAttachment], 32))
-		strcopy(g_equipment[g_equipmentCount][EquipmentAttachment], 32, "forward");
+	g_equipment[g_equipmentCount][EquipmentScale] = json_object_get_float(json, "scale");
 
-	if (!JSONGetString(json, "physicsmodel", g_equipment[g_equipmentCount][EquipmentPhysicsModelPath], PLATFORM_MAX_PATH))
-		g_equipment[g_equipmentCount][EquipmentPhysicsModelPath][0] = '\0';
+	new Handle:position = json_object_get(json, "position");
 
-	new Handle:team = INVALID_HANDLE;
-	if (JSONGetArray(json, "team", team) && team != INVALID_HANDLE)
-		for (new i = 0; i < GetArraySize(team); i++)
-			if (!JSONGetArrayInteger(team, i, g_equipment[g_equipmentCount][EquipmentTeam][i]))
-				g_equipment[g_equipmentCount][EquipmentTeam][i] = 0;
+	//PrintToServer("Loading: %s", g_equipment[g_equipmentCount][EquipmentModelPath]);
 
-	if (!JSONGetFloat(json, "scale", g_equipment[g_equipmentCount][EquipmentScale]))
-		g_equipment[g_equipmentCount][EquipmentScale] = 0.0;
+	for (new i = 0; i <= 2; i++)
+		g_equipment[g_equipmentCount][EquipmentPosition][i] = json_array_get_float(position, i);
 
-	new Handle:position = INVALID_HANDLE;
-	if (JSONGetArray(json, "position", position) && position != INVALID_HANDLE)
-		for (new i = 0; i <= 2; i++)
-			if (!JSONGetArrayFloat(position, i, g_equipment[g_equipmentCount][EquipmentPosition][i]))
-				g_equipment[g_equipmentCount][EquipmentPosition][i] = 0.0;
+	CloseHandle(position);
 
-	new Handle:angles = INVALID_HANDLE;
-	if (JSONGetArray(json, "angles", angles) && angles != INVALID_HANDLE)
-		for (new i = 0; i <= 2; i++)
-			if (!JSONGetArrayFloat(angles, i, g_equipment[g_equipmentCount][EquipmentAngles][i]))
-				g_equipment[g_equipmentCount][EquipmentAngles][i] = 0.0;
+	new Handle:angles = json_object_get(json, "angles");
 
-	if (strcmp(g_equipment[g_equipmentCount][EquipmentModelPath], "") != 0 && 
-		(FileExists(g_equipment[g_equipmentCount][EquipmentModelPath]) || FileExists(g_equipment[g_equipmentCount][EquipmentModelPath], true)))
+	for (new i = 0; i <= 2; i++)
+		g_equipment[g_equipmentCount][EquipmentAngles][i] = json_array_get_float(angles, i);
+
+	CloseHandle(angles);
+
+	if (strcmp(g_equipment[g_equipmentCount][EquipmentModelPath], "") != 0 && (FileExists(g_equipment[g_equipmentCount][EquipmentModelPath]) || FileExists(g_equipment[g_equipmentCount][EquipmentModelPath], true)))
 	{
 		PrecacheModel(g_equipment[g_equipmentCount][EquipmentModelPath]);
 		Downloader_AddFileToDownloadsTable(g_equipment[g_equipmentCount][EquipmentModelPath]);
 	}
 
-	new Handle:playermodels = INVALID_HANDLE;
-	if (JSONGetArray(json, "playermodels", playermodels) && playermodels != INVALID_HANDLE)
+	new Handle:playerModels = json_object_get(json, "playermodels");
+
+	if (playerModels != INVALID_HANDLE && json_typeof(playerModels) == JSON_ARRAY)
 	{
-		new size = GetArraySize(playermodels);
-		for (new i = 0; i < size; i++)
+		for (new index = 0, size = json_array_size(playerModels); index < size; index++)
 		{
-			new Handle:model = INVALID_HANDLE;
-			if (JSONGetArrayObject(playermodels, i, model) && model != INVALID_HANDLE)
+			new Handle:playerModel = json_array_get(playerModels, index);
+
+			if (playerModel == INVALID_HANDLE)
+				continue;
+
+			if (json_typeof(playerModel) != JSON_OBJECT)
 			{
-				if (!JSONGetString(model, "playermodel", g_playerModels[g_playerModelCount][PlayerModelPath], PLATFORM_MAX_PATH))
-				{
-					Store_LogWarning("Item '%s' does not contain a playermodel path at index %d", itemName, i);
-					continue;
-				}
-				new bool:haspositionorangle = false;
-
-				new Handle:modelposition = INVALID_HANDLE;
-				if (JSONGetArray(model, "position", modelposition) && modelposition != INVALID_HANDLE)
-				{
-					haspositionorangle = true;
-					for (new n = 0; n <= 2; n++)
-						if (!JSONGetArrayFloat(modelposition, n, g_playerModels[g_playerModelCount][Position][n]))
-							g_playerModels[g_playerModelCount][Position][n] = 0.0;
-				}
-				new Handle:modelangle = INVALID_HANDLE;
-				if (JSONGetArray(model, "angles", modelangle) && modelangle != INVALID_HANDLE)
-				{
-					haspositionorangle = true;
-					for (new n = 0; n <= 2; n++)
-						if (!JSONGetArrayFloat(modelangle, n, g_playerModels[g_playerModelCount][Angles][n]))
-							g_playerModels[g_playerModelCount][Angles][n] = 0.0;
-				}
-
-				if (haspositionorangle) 
-				{
-					strcopy(g_playerModels[g_playerModelCount][EquipmentName], STORE_MAX_NAME_LENGTH, itemName);
-					g_playerModelCount++;
-				}
+				CloseHandle(playerModel);
+				continue;
 			}
+
+			json_object_get_string(playerModel, "playermodel", g_playerModels[g_playerModelCount][PlayerModelPath], PLATFORM_MAX_PATH);
+
+			new Handle:playerModelPosition = json_object_get(playerModel, "position");
+
+			for (new i = 0; i <= 2; i++)
+				g_playerModels[g_playerModelCount][Position][i] = json_array_get_float(playerModelPosition, i);
+
+			CloseHandle(playerModelPosition);
+
+			new Handle:playerModelAngles = json_object_get(playerModel, "angles");
+
+			for (new i = 0; i <= 2; i++)
+				g_playerModels[g_playerModelCount][Angles][i] = json_array_get_float(playerModelAngles, i);
+
+			strcopy(g_playerModels[g_playerModelCount][EquipmentName], STORE_MAX_NAME_LENGTH, itemName);
+
+			g_playerModels[g_playerModelCount][currentlyLockedByClient] = -1;
+
+			CloseHandle(playerModelAngles);
+			CloseHandle(playerModel);
+
+			g_playerModelCount++;
 		}
+
+		CloseHandle(playerModels);
 	}
 
-	// todo: 'beautified' json causes an error invalid handle when calling DestroyJSON (fine when compacted, parser or impl error?)
-	DestroyJSON(json);
+	CloseHandle(json);
 
 	PrintToServer("Finished loading %s", itemName);
 
@@ -524,7 +586,7 @@ SetEntityVectors(source, ent, equipment)
 	{
 		ang[0] += g_playerModels[playerModel][Angles][0];
 		ang[1] += g_playerModels[playerModel][Angles][1];
-		ang[2] += g_playerModels[playerModel][Angles][2];
+		ang[2] += g_playerModels[playerModel][Angles][2];		
 	}
 
 	new Float:fOffset[3];
@@ -533,13 +595,13 @@ SetEntityVectors(source, ent, equipment)
 	{
 		fOffset[0] = g_equipment[equipment][EquipmentPosition][0];
 		fOffset[1] = g_equipment[equipment][EquipmentPosition][1];
-		fOffset[2] = g_equipment[equipment][EquipmentPosition][2];
+		fOffset[2] = g_equipment[equipment][EquipmentPosition][2];	
 	}
 	else
 	{
 		fOffset[0] = g_playerModels[playerModel][Position][0];
 		fOffset[1] = g_playerModels[playerModel][Position][1];
-		fOffset[2] = g_playerModels[playerModel][Position][2];
+		fOffset[2] = g_playerModels[playerModel][Position][2];		
 	}
 
 	GetAngleVectors(ang, fForward, fRight, fUp);
@@ -768,7 +830,7 @@ UnequipAll(client, bool:destroy=true)
 public Action:ShouldHide(ent, client)
 {
 	// if not hiding any own items, just show them all
-	if (!g_bHideOwnItems)
+	if (g_bShowOwnItemsClients[client] || g_bShowOwnItems)
 		return Plugin_Continue;
 
 	// hide all items for the client if they have the toggle special fx cookie set
@@ -807,51 +869,47 @@ stock bool:LookupAttachment(client, String:point[])
 	return SDKCall(g_hLookupAttachment, client, point);
 }
 
-public Action:Command_HideOwnItems(client, args)
+public ConVarChanged_ShowOnItem(Handle:convar, const String:oldValue[], const String:newValue[])
 {
-	g_bHideOwnItems = !g_bHideOwnItems;
-	ReplyToCommand(client, "%sHiding own items: %i", STORE_PREFIX, g_bHideOwnItems);
-	return Plugin_Handled;
+	g_bShowOwnItems = bool:StringToInt(newValue);
 }
 
 public Action:Command_OpenEditor(client, args)
 {
-	if (args < 1)
+	if (client == 0)
 	{
-		ReplyToCommand(client, "%sUsage: store_editor <name>", STORE_PREFIX);
+		ReplyToCommand(client, "%sError: this command hast be executed by a player ingame.", STORE_PREFIX);
 		return Plugin_Handled;
 	}
 
 	decl String:target[65];
 	decl String:target_name[MAX_TARGET_LENGTH];
-	decl target_list[MAXPLAYERS];
+	decl target_list[1];
 	decl target_count;
 	decl bool:tn_is_ml;
-    
-	GetCmdArg(1, target, sizeof(target));
-     
-	if ((target_count = ProcessTargetString(
-			target,
-			0,
-			target_list,
-			MAXPLAYERS,
-			0,
-			target_name,
-			sizeof(target_name),
-			tn_is_ml)) <= 0)
-	{
-		ReplyToTargetError(client, target_count);
-		return Plugin_Handled;
-	}
 
-	for (new i = 0; i < target_count; i++)
-	{
-		if (IsClientInGame(target_list[i]) && !IsFakeClient(target_list[i]))
+	if (args == 0) {
+		target_list[0] = client;
+	}
+	else {
+		GetCmdArg(1, target, sizeof(target));
+		 
+		if ((target_count = ProcessTargetString(
+				target,
+				0,
+				target_list,
+				sizeof(target_list),
+				COMMAND_FILTER_NO_MULTI | COMMAND_FILTER_NO_BOTS,
+				target_name,
+				sizeof(target_name),
+				tn_is_ml)) <= 0)
 		{
-			OpenEditor(client, target_list[0]);
-			break;
+			ReplyToTargetError(client, target_count);
+			return Plugin_Handled;
 		}
 	}
+
+	OpenEditor(client, target_list[0]);
 
 	return Plugin_Handled;
 }
@@ -885,7 +943,14 @@ public Editor_LoadoutSlotSelectHandle(Handle:menu, MenuAction:action, client, sl
 			new String:values[2][16];
 			ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
 
-			Editor_OpenLoadoutSlotMenu(client, StringToInt(values[0]), StringToInt(values[1]));
+			new target      = StringToInt(values[0]);
+			new loadoutSlot = StringToInt(values[1]);
+			
+			lastTargetSelected[client]      = target;
+			lastLoadOutSlotSelected[client] = loadoutSlot;
+
+			Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);
+			Editor_OnClientStartedEditing(client, target, loadoutSlot);
 		}
 	}
 	else if (action == MenuAction_End)
@@ -894,22 +959,51 @@ public Editor_LoadoutSlotSelectHandle(Handle:menu, MenuAction:action, client, sl
 	}
 }
 
-Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, Float:amount = 0.5)
+/*
+ * Generate a menu with the
+ * following items (In this order)
+ * 
+ * - Position X-
+ * - Position X+
+ * - Position Y-
+ * - Position Y+
+ * - Position Z-
+ * - Position Z+
+ * - Angle X-
+ * - Angle X+
+ * - Angle Y-
+ * - Angle Y+
+ * - Angle Z-
+ * - Angle Z+
+ * - Save
+*/
+Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, menuSelectionPosition = 0, Float:amount = 0.5)
 {
 	new Handle:menu = CreateMenu(Editor_ActionSelectHandle);
-	SetMenuTitle(menu, "Select action:");
+	SetMenuTitle(menu, "Select action:   Press +speed (Shift) for\nnegative values and +store_editor_bigchange (custom) for +- 5.0");
 
-	for (new bool:add = true; add >= false; add--)
+	//AddMenuItem(menu, "", "", ITEMDRAW_DISABLED);
+
+	for (new axis = 'x'; axis <= 'z'; axis++)
 	{
-		for (new axis = 'x'; axis <= 'z'; axis++)
+		if (GetConVarBool(g_editor_showNegativeValues))
 		{
-			Editor_AddMenuItem(menu, target, "position", loadoutSlot, axis, add, amount);
-			Editor_AddMenuItem(menu, target, "angles", loadoutSlot, axis, add, amount);
+			Editor_AddMenuItem(menu, target, "position", loadoutSlot, axis, false, amount);
 		}
+		Editor_AddMenuItem(menu, target, "position", loadoutSlot, axis, true,  amount);
+	}
+
+	for (new axis = 'x'; axis <= 'z'; axis++)
+	{
+		if (GetConVarBool(g_editor_showNegativeValues))
+		{
+			Editor_AddMenuItem(menu, target, "angles",   loadoutSlot, axis, false, amount);
+		}
+		Editor_AddMenuItem(menu, target, "angles",   loadoutSlot, axis, true,  amount);
 	}
 
 	Editor_AddMenuItem(menu, target, "save", loadoutSlot);
-	DisplayMenu(menu, client, 0);
+	DisplayMenuAtItem(menu, client, menuSelectionPosition, 0);
 }
 
 Editor_AddMenuItem(Handle:menu, target, const String:actionType[], loadoutSlot, axis = 0, bool:add = false, Float:amount = 0.0)
@@ -919,27 +1013,22 @@ Editor_AddMenuItem(Handle:menu, target, const String:actionType[], loadoutSlot, 
 
 	decl String:text[32];
 
-	if (StrEqual(actionType, "position"))
+	if (StrEqual(actionType, "position") || StrEqual(actionType, "angles"))
 	{
+		decl String:actionTypeDisplay[16];
+		strcopy(actionTypeDisplay, sizeof(actionTypeDisplay), actionType);
+
+		// Make the first letter uppercase for the menu
+		actionTypeDisplay[0] = CharToUpper(actionTypeDisplay[0]);
+
 		Format(text, sizeof(text), "%c ", CharToUpper(axis));
 
 		if (add)
-			Format(text, sizeof(text), "%s+", text);
+			Format(text, sizeof(text), "%s   +", text);
 		else
-			Format(text, sizeof(text), "%s-", text);
+			Format(text, sizeof(text), "%s   - ", text);
 
-		Format(text, sizeof(text), "Position %s %.1f", text, amount);
-	}
-	else if (StrEqual(actionType, "angles"))
-	{
-		Format(text, sizeof(text), "%c ", CharToUpper(axis));
-
-		if (add)
-			Format(text, sizeof(text), "%s+", text);
-		else
-			Format(text, sizeof(text), "%s-", text);
-
-		Format(text, sizeof(text), "Angles %s %.1f", text, amount);
+		Format(text, sizeof(text), "%s %s %.1f", actionType, text, amount);
 	}
 	else
 	{
@@ -949,17 +1038,20 @@ Editor_AddMenuItem(Handle:menu, target, const String:actionType[], loadoutSlot, 
 	AddMenuItem(menu, value, text);
 }
 
-public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
+public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, param1, param2)
 {
+	// For most actions param1 is client, but not for all
+	new client = param1;
+
 	if (action == MenuAction_Select)
 	{
+		new slot   = param2;
+
 		new String:value[128];
 		if (GetMenuItem(menu, slot, value, sizeof(value)))
 		{
 			new String:values[5][32];
 			ExplodeString(value, ",", values, sizeof(values), sizeof(values[]));
-			
-			//PrintToChatAll(values[0]); // debug msg :-)
 
 			new target = StringToInt(values[1]);
 			new loadoutSlot = StringToInt(values[2]);
@@ -970,6 +1062,19 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 			new axis = values[3][0];
 			new bool:add = bool:StringToInt(values[4]);
 
+			if (GetClientButtons(client) & IN_SPEED)
+			{
+				// Negate the units in any case when the sprint
+				// button is pressed.
+				add = false;
+			}
+
+			new Float:scaleUnits = 0.5;
+			if (clientsPressStoreEditorBigchange[client])
+			{
+				scaleUnits = 5.0;
+			}
+
 			new equipment = GetEquipmentIndexFromName(g_sCurrentEquipment[target][loadoutSlot]);
 			if (equipment < 0)
 			{
@@ -977,18 +1082,7 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 				return;
 			}
 
-			new playerModel = -1;
-			for (new j = 0; j < g_playerModelCount; j++)
-			{	
-				if (!StrEqual(g_sCurrentEquipment[target][loadoutSlot], g_playerModels[j][EquipmentName]))
-					continue;
-
-				if (!StrEqual(modelPath, g_playerModels[j][PlayerModelPath], false))
-					continue;
-
-				playerModel = j;
-				break;
-			}
+			new playerModel = GetCurrentPlayerModelByLoadoutSlot(client, loadoutSlot);
 
 			if (playerModel == -1)
 			{
@@ -1007,63 +1101,69 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 
 			if (StrEqual(values[0], "save"))
 			{
+				Editor_OnClientStoppedEditing(client, target, lastLoadOutSlotSelected[client]);
 				Editor_SavePlayerModelAttributes(client, equipment);
-			}
-			else if(StrEqual(values[0], "angles"))
-			{
-				if (axis == 'x')
-				{
-					if (add)
-						g_playerModels[playerModel][Angles][0] += 0.5;
-					else
-						g_playerModels[playerModel][Angles][0] -= 0.5;
-				}
-				else if (axis == 'y')
-				{
-					if (add)
-						g_playerModels[playerModel][Angles][1] += 0.5;
-					else
-						g_playerModels[playerModel][Angles][1] -= 0.5;
-				} 
-				else if (axis == 'z')
-				{
-					if (add)
-						g_playerModels[playerModel][Angles][2] += 0.5;
-					else
-						g_playerModels[playerModel][Angles][2] -= 0.5;
-				}
-
-				Equip(target, loadoutSlot, g_sCurrentEquipment[target][loadoutSlot]);
-				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);				
 			}
 			else
 			{
-				if (axis == 'x')
-				{
-					if (add)
-						g_playerModels[playerModel][Position][0] += 0.5;
-					else
-						g_playerModels[playerModel][Position][0] -= 0.5;
+				if (StrEqual(values[0], "angles")) {
+					if (axis == 'x')
+					{
+						if (add)
+							g_playerModels[playerModel][Angles][0] += scaleUnits;
+						else
+							g_playerModels[playerModel][Angles][0] -= scaleUnits;
+					}
+					else if (axis == 'y')
+					{
+						if (add)
+							g_playerModels[playerModel][Angles][1] += scaleUnits;
+						else
+							g_playerModels[playerModel][Angles][1] -= scaleUnits;
+					} 
+					else if (axis == 'z')
+					{
+						if (add)
+							g_playerModels[playerModel][Angles][2] += scaleUnits;
+						else
+							g_playerModels[playerModel][Angles][2] -= scaleUnits;
+					}
 				}
-				else if (axis == 'y')
+				else
 				{
-					if (add)
-						g_playerModels[playerModel][Position][1] += 0.5;
-					else
-						g_playerModels[playerModel][Position][1] -= 0.5;
-				} 
-				else if (axis == 'z')
-				{
-					if (add)
-						g_playerModels[playerModel][Position][2] += 0.5;
-					else
-						g_playerModels[playerModel][Position][2] -= 0.5;
+					if (axis == 'x')
+					{
+						if (add)
+							g_playerModels[playerModel][Position][0] += scaleUnits;
+						else
+							g_playerModels[playerModel][Position][0] -= scaleUnits;
+					}
+					else if (axis == 'y')
+					{
+						if (add)
+							g_playerModels[playerModel][Position][1] += scaleUnits;
+						else
+							g_playerModels[playerModel][Position][1] -= scaleUnits;
+					} 
+					else if (axis == 'z')
+					{
+						if (add)
+							g_playerModels[playerModel][Position][2] += scaleUnits;
+						else
+							g_playerModels[playerModel][Position][2] -= scaleUnits;
+					}
 				}
 
 				Equip(target, loadoutSlot, g_sCurrentEquipment[target][loadoutSlot]);
-				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot);				
+				Editor_OpenLoadoutSlotMenu(client, target, loadoutSlot, GetMenuSelectionPosition());
+
+				// Call this again in case round restarted or something
+				Editor_OnClientStartedEditing(client, target, loadoutSlot);
 			}
 		}
+	}
+	else if (action == MenuAction_Cancel) {
+		Editor_OnClientStoppedEditing(client, lastTargetSelected[client], lastLoadOutSlotSelected[client]);
 	}
 	else if (action == MenuAction_End)
 	{
@@ -1071,65 +1171,117 @@ public Editor_ActionSelectHandle(Handle:menu, MenuAction:action, client, slot)
 	}
 }
 
-// todo: untested with native json parsing
-Editor_SavePlayerModelAttributes(client, equipment)
-{	
-	new Handle:json = CreateJSON();
-	JSONSetString(json, "model", g_equipment[equipment][EquipmentModelPath]);
-	Editor_AppendJSONVector(json, "position", g_equipment[equipment][EquipmentPosition]);
-	Editor_AppendJSONVector(json, "angles", g_equipment[equipment][EquipmentAngles]);
-	JSONSetString(json, "attachment", g_equipment[equipment][EquipmentAttachment]);
+GetCurrentPlayerModelByLoadoutSlot(target, loadoutSlot)
+{
+	decl String:modelPath[PLATFORM_MAX_PATH];
+	GetClientModel(target, modelPath, sizeof(modelPath));
 
-	if (g_playerModelCount > 0) 
-	{
-		new Handle:playerModels = CreateArray(1);
-		new count = 0;
-		for (new j = 0; j < g_playerModelCount; j++)
-		{	
-			if (!StrEqual(g_equipment[equipment][EquipmentName], g_playerModels[j][EquipmentName]))
-				continue;
+	new playerModel = -1;
+	for (new j = 0; j < g_playerModelCount; j++)
+	{	
+		if (!StrEqual(g_sCurrentEquipment[target][loadoutSlot], g_playerModels[j][EquipmentName]))
+			continue;
 
-			new Handle:model = CreateJSON();
-			JSONSetString(model, "playermodel", g_playerModels[j][PlayerModelPath]);
-			Editor_AppendJSONVector(model, "position", g_playerModels[j][Position]);
-			Editor_AppendJSONVector(model, "angles", g_playerModels[j][Angles]);
+		if (!StrEqual(modelPath, g_playerModels[j][PlayerModelPath], false))
+			continue;
 
-			PushArrayCell(playerModels, model);
-		}
-
-		JSONSetArray(json, "playermodels", playerModels);
+		playerModel = j;
+		break;
 	}
 
-	new String:sJSON[10 * 1024];
-	EncodeJSON(json, sJSON, sizeof(sJSON));	
+	return playerModel;
+}
 
-	CloseHandle(json);
+Editor_OnClientStartedEditing(client, target, loadoutSlot)
+{
+	new playerModel = GetCurrentPlayerModelByLoadoutSlot(target, loadoutSlot);
+	if (playerModel != -1) {
+		g_playerModels[playerModel][currentlyLockedByClient] = client;
+	}
 
-	Store_WriteItemAttributes(g_equipment[equipment][EquipmentName], sJSON, Editor_OnSave, client);
+	if (client == target) {
+		g_bShowOwnItemsClients[client] = true;
+		Client_SetThirdPersonMode(client, true);
+	}
+}
+
+stock Editor_OnClientStoppedEditing(client, target, loadoutSlot)
+{
+	new playerModel = GetCurrentPlayerModelByLoadoutSlot(target, loadoutSlot);
+	if (playerModel != -1) {
+		g_playerModels[playerModel][currentlyLockedByClient] = -1;
+	}
+
+	if (client == target) {
+		g_bShowOwnItemsClients[client] = false;
+		Client_SetThirdPersonMode(client, false);
+	}
+}
+
+Editor_SavePlayerModelAttributes(client, equipment)
+{
+        new Handle:json = json_object();
+        json_object_set_new(json, "model", json_string(g_equipment[equipment][EquipmentModelPath]));
+        Editor_AppendJSONVector(json, "position", g_equipment[equipment][EquipmentPosition]);
+        Editor_AppendJSONVector(json, "angles", g_equipment[equipment][EquipmentAngles]);
+        json_object_set_new(json, "attachment", json_string(g_equipment[equipment][EquipmentAttachment]));
+
+        new Handle:playerModels = json_array();
+
+        for (new j = 0; j < g_playerModelCount; j++)
+        {        
+                if (!StrEqual(g_equipment[equipment][EquipmentName], g_playerModels[j][EquipmentName]))
+                        continue;
+
+                Editor_AppendJSONPlayerModel(playerModels, 
+                        g_playerModels[j][PlayerModelPath], 
+                        g_playerModels[j][Position], 
+                        g_playerModels[j][Angles]);
+        }
+
+        json_object_set_new(json, "playermodels", playerModels);
+
+        new String:sJSON[10 * 1024];
+        json_dump(json, sJSON, sizeof(sJSON));        
+
+        CloseHandle(json);
+
+        Store_WriteItemAttributes(g_equipment[equipment][EquipmentName], sJSON, Editor_OnSave, client);
 }
 
 public Editor_OnSave(bool:success, any:client)
 {
 	PrintToChat(client, "%sSave successful.", STORE_PREFIX);
-	g_bRestartGame = true;
-	Store_ReloadItemCache();
-}
 
-public Store_OnReloadItemsPost()
-{
-	if (g_bRestartGame)
+	for (new i = 0; i < g_playerModelCount; i++)
 	{
-		ServerCommand("mp_restartgame 1");
-		g_bRestartGame = false;
+		if (g_playerModels[i][currentlyLockedByClient] > 0 /*&& g_playerModels[i][currentlyLockedByClient] != client*/)
+		{
+			PrintToChat(client, "%sWarning: Not reloading items because player model of equipment \"%s\" is currently in process by \"%N\". You can force reload however.",
+				STORE_PREFIX, g_playerModels[i][EquipmentName], g_playerModels[i][currentlyLockedByClient]);
+			return;
+		}
 	}
+
+	Store_ReloadItemCache();
 }
 
 Editor_AppendJSONVector(Handle:json, const String:key[], Float:vector[])
 {
-	new Handle:array = CreateArray(1, 3);
+	new Handle:array = json_array();
 
 	for (new i = 0; i < 3; i++)
-		SetArrayCell(array, i, vector[i]);
+		json_array_append_new(array, json_real(vector[i]));
 
-	JSONSetArray(json, key, array);		
+	json_object_set_new(json, key, array);		
+}
+
+Editor_AppendJSONPlayerModel(Handle:json, const String:modelPath[], Float:position[], Float:angles[])
+{
+	new Handle:playerModel = json_object();
+	json_object_set_new(playerModel, "playermodel", json_string(modelPath));
+	Editor_AppendJSONVector(playerModel, "position", position);
+	Editor_AppendJSONVector(playerModel, "angles", angles);
+
+	json_array_append_new(json, playerModel);
 }
