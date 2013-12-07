@@ -42,7 +42,7 @@ new Handle:g_hLookupAttachment = INVALID_HANDLE;
 new bool:g_bZombieReloaded;
 new bool:g_bToggleEffects;
 
-new g_equipment[1024][Equipment];
+new g_equipment[STORE_MAX_ITEMS][Equipment];
 new g_equipmentCount = 0;
 
 new Handle:g_equipmentNameIndex = INVALID_HANDLE;
@@ -50,7 +50,7 @@ new Handle:g_loadoutSlotList = INVALID_HANDLE;
 new lastLoadOutSlotSelected[MAXPLAYERS + 1];
 new lastTargetSelected[MAXPLAYERS + 1];
 
-new g_playerModels[1024][EquipmentPlayerModelSettings];
+new g_playerModels[STORE_MAX_ITEMS][EquipmentPlayerModelSettings];
 new g_playerModelCount = 0;
 
 new String:g_sCurrentEquipment[MAXPLAYERS+1][32][STORE_MAX_NAME_LENGTH];
@@ -1241,8 +1241,8 @@ Editor_SavePlayerModelAttributes(client, equipment)
 
         json_object_set_new(json, "playermodels", playerModels);
 
-        new String:sJSON[10 * 1024];
-        json_dump(json, sJSON, sizeof(sJSON));        
+        new String:sJSON[STORE_MAX_ATTRIBUTES_LENGTH];
+        json_dump(json, sJSON, sizeof(sJSON));
 
         CloseHandle(json);
 
